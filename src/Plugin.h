@@ -40,6 +40,8 @@ namespace Plugin
 	[[nodiscard]] const char* LightingName(Lighting a_lighting);
 	[[nodiscard]] bool        InverseSquare();
 	[[nodiscard]] bool        LightLimitFix();
+	// a row's strength under the Brightness slider, with the Vanilla share of the mods its numbers came from (Anima::TheirVanillaShare)
+	[[nodiscard]] float RowStrength(const Anima::Row& a_row, const Anima::Settings& a_s);
 
 	// ------------------------------------------------------------------ Settings.cpp: IlluminatedCreatureLightingNG\Settings.ini, written by the menu
 	void                          LoadSettings();
@@ -61,6 +63,10 @@ namespace Plugin
 	[[nodiscard]] RE::TESForm* FormOfKey(std::string_view a_key);
 	// another mod's Light Placer file names a model of this row
 	[[nodiscard]] bool RowModelsLitByOthers(std::size_t a_row);
+	// an object row (ObjectLights.cpp): its model's other mod has its switch on, so the object is that mod's; ours replaces theirs otherwise
+	[[nodiscard]] bool ObjectGivenToThem(std::size_t a_row, const Anima::Settings& a_s);
+	// main thread: another mod's Light Placer lights on a placed object of the row out where ours shows, back where it does not
+	void TheirObjectLights(RE::NiAVObject* a_root, std::size_t a_row, const Anima::Settings& a_s, bool a_oursShows);
 	// main thread: another creature lighting mod lights this actor and its switch gives the creature back to it
 	[[nodiscard]] bool                                GivenToThem(RE::Actor* a_actor, const Anima::Settings& a_s);
 	void                                              OfferToPicker();                 // data load, after the creatures files: joins Illuminated's or RELight's Choose Your Own Color page, when there is one
@@ -117,6 +123,14 @@ namespace Plugin
 	[[nodiscard]] std::size_t                          ImpactLitCount();     // how many impact particles were judged and not yet ended (DevBench)
 	[[nodiscard]] std::pair<std::uint64_t, RE::FormID> ImpactSeen();         // particles the impact hook looked at, the last one's impact record (DevBench)
 	[[nodiscard]] std::vector<std::string>             ImpactModelsSeen();   // the newest model names of particles no row's impact record named (DevBench)
+	// main thread: a light of ours dressed from its row, the settings and the player's picked color (the object lights share it)
+	void DressRowLight(RE::NiPointLight* a_light, std::size_t a_row, const Anima::Settings& a_s);
+
+	// ------------------------------------------------------------------ ObjectLights.cpp: placed objects an object row names (critters, jars of bugs)
+	void                      InstallObjectLights();  // data load, from InstallLights: the base objects the rows name, a reference's two 3D slots
+	void                      DropObjectLights();     // a game loads, or a new one starts
+	void                      ApplyObjects();         // main thread: the settings onto every object light now (from ApplyNow)
+	[[nodiscard]] std::size_t ObjectLitCount();       // how many placed objects carry a light of ours now (DevBench)
 
 	// ------------------------------------------------------------------ Menu.cpp / DevBench.cpp
 	void RegisterMenu();

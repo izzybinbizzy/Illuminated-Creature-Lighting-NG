@@ -159,9 +159,19 @@ namespace Anima
 		std::optional<std::size_t> extra;                    // a light of its own switch (switch=, kExtras): the menu turns it off apart from its kind
 		Stream                     stream{ Stream::kNone };  // stream=: a row of lights along its records' projectiles (StreamRows)
 		bool                       moved{ false };           // moved=yes: Illuminated / RELight lit it before; left to an older one still loaded
+		bool                       object{ false };          // object=yes: a placed object its model names (a critter, a jar of bugs), never a character
 		std::string                creature;                 // the creature as a player knows it, for its menu switch (creature=, else the row's name)
 		std::string                group;                    // its menu group: the creatures file it came from (the caller fills it)
 	};
+
+	// Illuminated and RELight light everything a third brighter on Vanilla (their VanillaBrightness, 1.35 as made). The spell, burst and
+	// stream rows took their numbers (the steam, ours alone, takes the same so the spells stay alike) and a moved row was theirs, so on
+	// Vanilla each keeps that share: a light looks the same after it moves
+	inline constexpr float     kTheirVanilla = 1.35f;
+	[[nodiscard]] inline float TheirVanillaShare(const Row& a_row, bool a_vanilla) noexcept
+	{
+		return a_vanilla && (a_row.moved || a_row.kind == Kind::kSpell || a_row.kind == Kind::kBurst) ? kTheirVanilla : 1.0f;
+	}
 
 	// the lights a player can turn off on their own, each a switch in the menu, on by default (his 575: "make these toggles like the configs
 	// we have for illuminated in case users dont want them"); a row names one with switch=<key>. Menu.cpp holds each one's text
@@ -324,6 +334,12 @@ namespace Anima
 					return false;
 				}
 				a_row.moved = true;
+			} else if (key == "object") {
+				// only "yes": a misspelt value would hang a creature's row on no body and light no object
+				if (!SameText(a_value, "yes")) {
+					return false;
+				}
+				a_row.object = true;
 			} else if (key == "art") {
 				a_row.arts.push_back(NormalPath(a_value));
 			} else if (key == "impact") {
@@ -353,9 +369,10 @@ namespace Anima
 		std::optional<Row> row;
 		bool               ok = true;
 		const auto         finish = [&]() {
-			// a stream row draws only along the projectiles its records name
+			// a stream row draws only along the projectiles its records name; an object row is a glow found by its model alone
 			if (row && ((row->races.empty() && row->models.empty() && row->records.empty() && row->skins.empty() && row->shaders.empty() && row->arts.empty() && row->impacts.empty()) ||
-						   (row->stream != Stream::kNone && row->records.empty()) || !ok)) {
+						   (row->stream != Stream::kNone && row->records.empty()) ||
+						   (row->object && (row->models.empty() || row->kind != Kind::kGlow)) || !ok)) {
 				++a_skipped;
 			} else if (row) {
 				if (row->points.empty()) {

@@ -227,8 +227,10 @@ namespace Plugin
 
 		void IndexRows()
 		{
-			// the spell and burst rows light game records (SpellLights.cpp), never a creature's body
-			const auto onBody = [](const Anima::Row& a_r) { return a_r.kind == Anima::Kind::kGlow || a_r.kind == Anima::Kind::kEyes || a_r.kind == Anima::Kind::kMachines; };
+			// the spell and burst rows light game records (SpellLights.cpp) and the object rows placed objects (ObjectLights.cpp), never a creature's body
+			const auto onBody = [](const Anima::Row& a_r) {
+				return !a_r.object && (a_r.kind == Anima::Kind::kGlow || a_r.kind == Anima::Kind::kEyes || a_r.kind == Anima::Kind::kMachines);
+			};
 			for (std::size_t i = 0; i < gRows.size(); ++i) {
 				if (!onBody(gRows[i])) {
 					continue;
@@ -903,6 +905,31 @@ namespace Plugin
 				}
 			}
 		}
+	}
+
+	bool ObjectGivenToThem(std::size_t a_row, const Anima::Settings& a_s)
+	{
+		return std::ranges::any_of(gRows[a_row].models, [&](const std::string& a_model) {
+			const auto it = gClaims.find(a_model);
+			return it != gClaims.end() && Anima::GivenBack(it->second, a_s);
+		});
+	}
+
+	void TheirObjectLights(RE::NiAVObject* a_root, std::size_t a_row, const Anima::Settings& a_s, bool a_oursShows)
+	{
+		const auto& models = gRows[a_row].models;
+		if (!a_root || gClaimFiles.empty() || std::ranges::none_of(models, [](const std::string& a_model) { return gClaims.contains(a_model); })) {
+			return;
+		}
+		// the creature route's way on a placed object: a light is another mod's only when its file names the row's model
+		RE::BSVisit::TraverseScenegraphLights(a_root, [&](RE::NiPointLight* a_light) {
+			const auto file = Anima::LightPlacerFile(a_light->name.c_str());
+			const auto it = file ? gClaimFiles.find(*file) : gClaimFiles.end();
+			if (it != gClaimFiles.end() && std::ranges::any_of(models, [&](const std::string& a_model) { return it->second.models.contains(a_model); })) {
+				SetPlacerLight(a_light, Anima::TheirLightOut(a_oursShows, a_s.theirs[it->second.mod]));
+			}
+			return RE::BSVisit::BSVisitControl::kContinue;
+		});
 	}
 
 	bool OthersLightBodies() { return !gClaims.empty(); }

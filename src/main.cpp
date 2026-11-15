@@ -25,8 +25,9 @@
 //   Creatures.cpp       the creatures files, the races and body models they name, what the other creature lighting mods light
 //   CreatureLights.cpp  the lights: made when a creature's 3D loads, dropped when it unloads; their flicker, death fade and cast surge
 //                       are keys the game's own dimmer controllers play - no pass of ours runs while they do
+//   ObjectLights.cpp    placed objects an object row names (torchbugs, jars of bugs), lit when their 3D loads, the nearest few
 //   SpellLights.cpp     the spells creatures use and their explosions, lit through the game's own record lights
-//   Lighting.cpp        Community Shaders, ENB or Vanilla (Illuminated's automatic detection)
+//   Lighting.cpp        Community Shaders, ENB or Vanilla: the shared GameLighting.h finds it
 //   Settings.cpp        the settings file, read at load and saved after each change
 //   Menu.cpp            the SKSE Menu Framework page        DevBench.cpp  DevBench's inspect and control (optional)
 //   LightKit.h, LightMath.h, Pulse.h, MenuStyle.h, Translation.h, RuntimeGuard.h, DevBenchGlue.h, SKSEMenuFramework.h, FadePickerAPI.h,

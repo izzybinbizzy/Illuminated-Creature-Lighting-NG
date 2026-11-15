@@ -206,7 +206,7 @@ namespace Plugin
 		// field and the size in the field of view, as it reads a record; else a plain light whose radius carries the reach)
 		void Dress(RE::TESObjectLIGH* a_light, const Anima::Row& a_row, const Anima::Settings& a_s)
 		{
-			const float strength = a_row.strength * static_cast<float>(a_s.brightness) / 100.0f;
+			const float strength = RowStrength(a_row, a_s);
 			const float reach = a_row.reach * static_cast<float>(a_s.reach) / 100.0f;
 			if (InverseSquare()) {
 				a_light->fade = strength;

@@ -97,7 +97,7 @@ namespace Plugin
 				return json{ { "lighting", LightingName(LightingFound()) }, { "inverseSquare", InverseSquare() }, { "settings", SettingsJson(SettingsNow()) },
 					{ "creatureFiles", FilesRead() }, { "creatureRows", CreatureRowCount() }, { "creatureList", CreatureListJson() }, { "spellRecordsLit", SpellRecordCount() },
 					{ "otherMods", OthersJson() }, { "eyesMod", EyesModLoaded() }, { "lit", LitReport() },
-					{ "loadEvents", { { "litAbilities", LitAbilitiesNoted() }, { "hungAgain", LightsHungAgain() }, { "castLightsOut", CastLightsPutOut() } } }, { "artLit", ArtLitCount() }, { "impactLit", ImpactLitCount() },
+					{ "loadEvents", { { "litAbilities", LitAbilitiesNoted() }, { "hungAgain", LightsHungAgain() }, { "castLightsOut", CastLightsPutOut() } } }, { "artLit", ArtLitCount() }, { "impactLit", ImpactLitCount() }, { "objectsLit", ObjectLitCount() },
 					{ "impactSeen", { { "particles", ImpactSeen().first }, { "lastRecord", std::format("{:08X}", ImpactSeen().second) }, { "models", ImpactModelsSeen() } } },
 					{ "streams", StreamsJson() }, { "cost", CostJson() } };
 			});

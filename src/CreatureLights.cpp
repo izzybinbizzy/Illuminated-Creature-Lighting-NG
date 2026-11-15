@@ -370,7 +370,7 @@ namespace Plugin
 				light->name = kName;
 				light->local.translate = { row.points.front().x, row.points.front().y, row.points.front().z };
 				light->GetLightRuntimeData().radius.x = -1.0f;  // the clone's own may equal ours: Dress attenuates it at once
-				Dress(light, row, row.strength * static_cast<float>(s.brightness) / 100.0f, s, std::nullopt);
+				Dress(light, row, RowStrength(row, s), s, std::nullopt);
 				RE::NiPointer<RE::BSLight> bs(LightKit::Hang(node, light, scene, 1.0f, true));
 				if (bs) {
 					gArtLit.push_back({ id, RE::NiPointer<RE::NiPointLight>(light), bs });
@@ -409,7 +409,7 @@ namespace Plugin
 				light->name = kName;
 				light->local.translate = { row.points.front().x, row.points.front().y, row.points.front().z };
 				light->GetLightRuntimeData().radius.x = -1.0f;  // the clone's own may equal ours: Dress attenuates it at once
-				Dress(light, row, row.strength * static_cast<float>(s.brightness) / 100.0f, s, std::nullopt);
+				Dress(light, row, RowStrength(row, s), s, std::nullopt);
 				RE::NiPointer<RE::BSLight> bs(LightKit::Hang(node, light, scene, 1.0f, true));
 				if (bs) {
 					one = { RE::NiPointer<RE::NiPointLight>(light), bs };
@@ -506,7 +506,7 @@ namespace Plugin
 				const auto& row = Rows()[i];
 				auto*       bone = BoneFor(root, row);
 				auto*       node = bone ? bone : root->AsNode();
-				float       strength = row.strength * static_cast<float>(a_s.brightness) / 100.0f;
+				float       strength = RowStrength(row, a_s);
 				if (lit.dying) {
 					// dead before we saw it: only an ember is left
 					strength *= Anima::DeathShare(Anima::kDeathFadeSeconds, a_s.deathFade, row.ember);
@@ -1463,10 +1463,12 @@ namespace Plugin
 			ImpactFree::func = particle.write_vfunc(0x00, ImpactFree::thunk);
 		}
 		SKSE::log::info("lights follow the game's events; their motion is the game's own dimmer controllers (light cap {})", Cap());
+		InstallObjectLights();
 	}
 
 	void DropLights()
 	{
+		DropObjectLights();
 		DropAll();
 		ForgetWornLights();
 		{
@@ -1527,6 +1529,7 @@ namespace Plugin
 		Pick(s, still, false);
 		LightArt({}, true);
 		RearmArt();
+		ApplyObjects();
 		// a switch: every creature's other lights follow at once, those Pick does not hold a light for too
 		if (auto* lists = a_othersToo ? RE::ProcessLists::GetSingleton() : nullptr) {
 			for (const auto* handles : { &lists->highActorHandles, &lists->middleHighActorHandles }) {
@@ -1557,6 +1560,12 @@ namespace Plugin
 	{
 		std::scoped_lock l{ gImpactModelsLock };
 		return gImpactModels;
+	}
+
+	void DressRowLight(RE::NiPointLight* a_light, std::size_t a_row, const Anima::Settings& a_s)
+	{
+		const auto& row = Rows()[a_row];
+		Dress(a_light, row, RowStrength(row, a_s), a_s, PickedColor(a_row));
 	}
 
 	nlohmann::json LitReport()

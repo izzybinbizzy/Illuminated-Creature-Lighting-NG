@@ -32,7 +32,7 @@ namespace
 #define CHECK(x) Check((x), #x, __LINE__)
 
 	// the fewest checks a whole run makes (raise it when checks are added; lower it only when checks are removed on purpose)
-	constexpr int kFloor = 268 + FloorLightChecks::kCount + RowParkChecks::kCount;
+	constexpr int kFloor = 272 + FloorLightChecks::kCount + RowParkChecks::kCount;
 
 	[[nodiscard]] bool Near(float a, float b, float a_eps = 0.001f) { return std::fabs(a - b) <= a_eps; }
 
@@ -352,6 +352,37 @@ namespace
 		const auto  mv = Anima::ReadCreatures(movedIn, sMoved);
 		CHECK(mv.size() == 2 && sMoved == 1);
 		CHECK(mv.size() == 2 && mv[0].moved && !mv[1].moved);
+
+		// on Vanilla a light Illuminated or RELight lit before keeps their third more: a moved row, a spell or burst row; a creature's own
+		// glow, eyes and machines keep their strength, and off Vanilla nothing changes
+		Anima::Row ownGlow{};
+		Anima::Row movedGlow{};
+		movedGlow.moved = true;
+		Anima::Row spellRow{};
+		spellRow.kind = Anima::Kind::kSpell;
+		Anima::Row eyesRow{};
+		eyesRow.kind = Anima::Kind::kEyes;
+		Anima::Row burstRow{};
+		burstRow.kind = Anima::Kind::kBurst;
+		Anima::Row machinesRow{};
+		machinesRow.kind = Anima::Kind::kMachines;
+		CHECK(Near(Anima::TheirVanillaShare(burstRow, true), 1.35f) && Near(Anima::TheirVanillaShare(machinesRow, true), 1.0f));
+		CHECK(Near(Anima::TheirVanillaShare(movedGlow, true), 1.35f) && Near(Anima::TheirVanillaShare(spellRow, true), 1.35f));
+		CHECK(Near(Anima::TheirVanillaShare(ownGlow, true), 1.0f) && Near(Anima::TheirVanillaShare(eyesRow, true), 1.0f));
+		CHECK(Near(Anima::TheirVanillaShare(movedGlow, false), 1.0f) && Near(Anima::TheirVanillaShare(spellRow, false), 1.0f));
+
+		// an object row (a critter, a jar of bugs): object=yes on a glow row with a model; a misspelt value, a race-only row or a spell kind
+		// leaves it out (counted), and a row without the line is no object
+		std::istringstream objectIn(
+			"[creature]\nname=Bug\nmodel=critters\\firefly\\firefly.nif\nobject=yes\ncolor=1,2,3\n"
+			"[creature]\nname=Typo\nmodel=critters\\a.nif\nobject=yse\ncolor=1,2,3\n"
+			"[creature]\nname=NoModel\nrace=FoxRace\nobject=yes\ncolor=1,2,3\n"
+			"[creature]\nname=Spell\nmodel=magic\\a.nif\nkind=spell\nobject=yes\ncolor=1,2,3\n"
+			"[creature]\nname=Body\nmodel=actors\\a.nif\ncolor=1,2,3\n");
+		std::size_t sObject = 0;
+		const auto  ob = Anima::ReadCreatures(objectIn, sObject);
+		CHECK(ob.size() == 2 && sObject == 3);
+		CHECK(ob.size() == 2 && ob[0].object && ob[0].models.front() == "critters\\firefly\\firefly.nif" && !ob[1].object);
 
 		// a ghost row (his 573): read off shader= alone, it names a creature; it joins only a creature with no glow of its own
 		std::istringstream ghost("[creature]\nname=Ghost\nshader=0x3B6CB~Skyrim.esm\nelement=spirit\ncolor=114,170,255\npoint=0,0,64\n");

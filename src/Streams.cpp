@@ -105,7 +105,7 @@ namespace Plugin
 			// read after ReadLighting: the lighting does not change within a game
 			const auto&              rgb = InverseSquare() && row.rgbIsl ? *row.rgbIsl : row.rgb;
 			const StreamRows::Recipe recipe{ .color = { rgb[0] / 255.0f, rgb[1] / 255.0f, rgb[2] / 255.0f },
-				.fade = row.strength,
+				.fade = row.strength * Anima::TheirVanillaShare(row, LightingFound() == Lighting::kVanilla),
 				.reach = row.reach,
 				.beam = row.stream == Anima::Stream::kBolt,
 				.spray = natural,

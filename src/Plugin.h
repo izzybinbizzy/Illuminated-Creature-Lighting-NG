@@ -107,7 +107,7 @@ namespace Plugin
 	void                      WarnIfNoLightPlacer(std::string_view a_mod);    // data load: one box on Community Shaders without Light Placer
 	void                      ApplySpellRecords(const Anima::Settings& a_s);  // the settings onto them (data load, the menu)
 	[[nodiscard]] std::size_t SpellRecordCount();
-	// his "Spells too": any creature switched off now (any thread); the spell lights the switches culled on their casters since the
+	// a creature's switch covers its spells: any creature switched off now (any thread); the spell lights the switches culled on their casters since the
 	// game started: projectiles, explosions, hazards, casting lights, beam row lights (DevBench)
 	[[nodiscard]] bool                         AnyCreatureOff();
 	[[nodiscard]] std::array<std::uint64_t, 5> SwitchCulls();

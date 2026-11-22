@@ -828,7 +828,8 @@ namespace Plugin
 		if (!a_actor || !a_s.creaturesOff || a_s.creaturesOff->empty()) {
 			return false;
 		}
-		// Anima::AllSwitchedOff's test, read straight off the rows: it runs inside the game's light-making call, so no name is copied
+		// Anima::AllSwitchedOff's test, read straight off the rows (no creature name copied): it runs inside the game's light-making call on
+		// loader and job threads, where only the rows' tables (fixed at data load) and the actor's static race and skin records are read
 		bool named = false;
 		for (const auto i : RowsOf(a_actor)) {
 			if (Anima::OnThePicker(gRows[i].kind)) {

@@ -16,7 +16,7 @@
 // data load, so the original call runs its light-making first), and a row the menu switched off culls them there - but never on a record
 // another mod's RE::Light file names too, whose light may be theirs.
 //
-// A creature switched off in the menu (his "Spells too"): the records are shared with the player and other casters, so its spells' lights
+// A creature switched off in the menu turns off its spells' lights too: the records are shared with the player and other casters, so its spells' lights
 // of ours are culled on that one caster as the game makes each: a casting light or a projectile's at the game's own light-making call
 // (the sites RE::Light and RELight hook; Load3D's own body makes no projectile light), an explosion's or a hazard's
 // right after the call in its update that makes it (the places Light Placer wraps), a beam's row of ours on the frames after it loads.
@@ -117,7 +117,8 @@ namespace Plugin
 							return RE::BSVisit::BSVisitControl::kContinue;
 						});
 					}
-					if (root && handle && a_looks > 1) {
+					// a projectile whose queued load has not stored its body yet is looked at again; the chain ends when it is gone
+					if (ref && !ref->IsDeleted() && handle && a_looks > 1) {
 						CullRowsLater(nullptr, handle, a_looks - 1);
 					}
 				});
@@ -470,8 +471,8 @@ namespace Plugin
 			if (byModel.empty()) {
 				return;
 			}
-			// Light Placer lights these art rows from our own file in LightPlacer\IlluminatedCreatureLightingNG (his checklist 627; it is required
-			// on Community Shaders): wherever it runs, ours stands down, so no art is lit twice
+			// Light Placer lights these art rows from our own file in LightPlacer\IlluminatedCreatureLightingNG (it is required on
+			// Community Shaders): wherever it runs, ours stands down, so no art is lit twice
 			if (ArtLeftToLightPlacer()) {
 				SKSE::log::info("creature spells: {} art row model(s) left to Light Placer, which lights them from our own file", byModel.size());
 				return;

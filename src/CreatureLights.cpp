@@ -1021,7 +1021,7 @@ namespace Plugin
 		}
 
 		// a creature that went in the middle of a cast (a summon running out, Disable, its cell unloading) leaves its casting light in the
-		// scene with nobody there, lighting the ground (his 580). Out of the scene first, then its caster lets go of it: a BSLight that is
+		// scene with nobody there, lighting the ground. Out of the scene first, then its caster lets go of it: a BSLight that is
 		// still held keeps lighting the geometry it touched (the plugin framework section 7)
 		void PutOutCastLight(RE::FormID a_id, const RE::NiPointer<RE::BSLight>& a_bs)
 		{
@@ -1250,7 +1250,7 @@ namespace Plugin
 					const auto id = a_this->GetFormID();
 					Note([id, on]() { gNoted.loaded.push_back({ id, on, {} }); });
 				}
-				// a casting light still up as a creature of ours goes is the game's leftover (his 580): the caster slots' light pointers are read
+				// a casting light still up as a creature of ours goes is the game's leftover: the caster slots' light pointers are read
 				// first (a few reads, the hook's idle path), the creature tables only for a body that leaves one up. Disable's 3D release runs off
 				// the main thread, so the light is taken here (the 1.0 game check: gated to the main thread, the matron's glow stayed)
 				if (!on && HasCastLight(a_this) && CouldLight(a_this)) {

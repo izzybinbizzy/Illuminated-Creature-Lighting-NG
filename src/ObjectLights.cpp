@@ -55,7 +55,7 @@ namespace Plugin
 		};
 		std::unordered_map<RE::FormID, Object> gObjects;
 
-		// with RE::Light loaded the objects have no cap: as many as RE::Light itself allows (his checklist 629)
+		// with RE::Light loaded the objects have no cap: as many as RE::Light itself allows
 		[[nodiscard]] bool ReLightLoaded()
 		{
 			static const bool loaded = REX::W32::GetModuleHandleA("ReLight.dll") != nullptr;

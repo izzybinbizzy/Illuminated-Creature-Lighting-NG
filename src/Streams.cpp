@@ -114,7 +114,9 @@ namespace Plugin
 				.cloud = row.stream == Anima::Stream::kCloud };
 			for (const auto& key : row.records) {
 				auto* form = FormOfKey(key);
-				if (const auto* proj = form ? form->As<RE::BGSProjectile>() : nullptr) {
+				if (const auto* proj = form ? form->As<RE::BGSProjectile>() : nullptr; proj && !RowDrawn(proj)) {
+					SKSE::log::info("stream rows: {} names {} - neither a beam, a flame nor a cone in this load order, so it is lit on its record", row.name, key);
+				} else if (proj) {
 					rows.insert_or_assign(proj->GetFormID(), recipe);
 					if (natural) {
 						gNaturalBases.insert(proj->GetFormID());

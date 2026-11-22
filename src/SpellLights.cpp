@@ -533,7 +533,7 @@ namespace Plugin
 			if (row.stream != Anima::Stream::kNone) {
 				for (const auto& key : row.records) {
 					auto* form = FormOfKey(key);
-					if (const auto* p = form ? form->As<RE::BGSProjectile>() : nullptr) {
+					if (const auto* p = form ? form->As<RE::BGSProjectile>() : nullptr; RowDrawn(p)) {
 						streamed.insert(p);
 					}
 				}
@@ -542,6 +542,13 @@ namespace Plugin
 		// the records named by form first: they win over a model shared with other records
 		for (std::size_t i = 0; i < rows.size(); ++i) {
 			if (rows[i].stream != Anima::Stream::kNone) {
+				// a stream row's record StreamRows cannot draw (a missile) is lit here like a spell row's record
+				for (const auto& key : rows[i].records) {
+					auto* form = FormOfKey(key);
+					if (auto* p = form ? form->As<RE::BGSProjectile>() : nullptr; p && !RowDrawn(p)) {
+						Add(p->data.light, i, white, p, p->GetModel(), false);
+					}
+				}
 				continue;
 			}
 			for (const auto& key : rows[i].records) {
@@ -567,7 +574,7 @@ namespace Plugin
 			}
 			for (const auto& key : rows[i].records) {
 				auto* form = FormOfKey(key);
-				if (auto* p = form ? form->As<RE::BGSProjectile>() : nullptr; p && p->data.light) {
+				if (auto* p = form ? form->As<RE::BGSProjectile>() : nullptr; p && p->data.light && RowDrawn(p)) {
 					Add(p->data.light, i, white, p, p->GetModel(), true);
 				}
 			}

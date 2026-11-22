@@ -101,6 +101,12 @@ namespace Plugin
 	void                                       DropStreams();         // a game loads, or a new one starts
 	[[nodiscard]] std::array<std::uint64_t, 4> StreamCounts();        // rows and row lights now, then hung since the game started (DevBench)
 	[[nodiscard]] bool                         OlderCarrierLoaded();  // an Illuminated below 3.1 or a RELight below 4.1 is loaded (they light the moved rows)
+	// StreamRows hooks only beams, flames and cones: a stream row's record of another type (a mod can retype it - the vanilla ice volley is a
+	// missile, a cone under ExpertPierce) gets a light of ours on the record instead
+	[[nodiscard]] inline bool RowDrawn(const RE::BGSProjectile* a_proj)
+	{
+		return a_proj && (a_proj->IsBeam() || a_proj->IsFlamethrower() || a_proj->IsCone());
+	}
 
 	void                      ReadSpellRecords();                             // data load: the records the spell and burst rows name get a light of ours
 	[[nodiscard]] bool        ArtLeftToLightPlacer();                         // Light Placer loaded: it lights the art rows from our own file

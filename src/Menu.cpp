@@ -4,7 +4,7 @@
 //
 // The SKSE Menu Framework page - every setting this mod has (settings live in the SKSE menu only). One page: what was found,
 // the lights' switch, the kinds, the one switch for elements that should not glow, the lights of their own switch, Brightness, Reach, the three ways a
-// light moves, a checkbox per creature, and Other Mods' Lights - one switch per other creature lighting mod that is installed.
+// light moves, a checkbox per creature, Other Mods' Lights - one switch per other creature lighting mod that is installed - and Advanced.
 // A change is saved and applied on the game's main thread when it is let go.
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -30,7 +30,7 @@
 #include "MenuStyle.h"
 #include "Translation.h"
 
-// a line Translation.json carries though it is not written inside T( ) here (Soul Gem Hub's mark, read by translation file.py)
+// a line the translation file carries though it is not written inside T( ) here (Soul Gem Hub's mark, read by translation file.py)
 #define TR_MARK(x) x
 
 namespace Plugin
@@ -149,6 +149,11 @@ namespace Plugin
 			if (EyesModLoaded()) {
 				MenuStyle::Note(T("JS Emissive Eyes handles the eyes while it's installed, so my glowing eyes stay off."));
 			}
+			// shown only when a replacer emptied the draugr eye art these lights stand for
+			if (BlankGlowArt()) {
+				Field(T("Draugr and skeletons with no eye glow"), &Anima::Settings::noGlowUndead,
+					T("Lights draugr and skeletons even when a draugr replacer has removed their eye glow (off by default)."));
+			}
 			Field(T("Ice, wind, water and stone creatures"), &Anima::Settings::natural,
 				T("Frost atronachs, ice wraiths and other creatures that wouldn't give off light (off by default)."));
 			// each light of its own switch (Anima::kExtras, in that order): on by default, off here for a player who does not want it
@@ -182,14 +187,14 @@ namespace Plugin
 			if (const auto& list = CreatureList(); !list.empty()) {
 				Header(Icon::kBulb, T("Creatures"));
 				if (CollapsingHeader(T("Creature switches"))) {
-					MenuStyle::Note(T("Untick a creature to turn off its lights."));
+					MenuStyle::Note(T("Untick a creature to turn off its lights and the lights of the spells it casts."));
 					const auto s = SettingsNow();
 					for (const auto& [group, creatures] : list) {
 						PushID(group.c_str());
 						if (TreeNode(group.c_str())) {
 							for (const auto& creature : creatures) {
 								bool v = Anima::CreatureOn(s, creature);
-								if (Switch(creature.c_str(), v, T("Ticked: this creature is lit."))) {
+								if (Switch(creature.c_str(), v, T("Ticked: this creature and its spells are lit."))) {
 									UpdateSettings([&](Anima::Settings& a_s) { Anima::SetCreatureOn(a_s, creature, v); });
 									Changed();
 								}
@@ -238,6 +243,10 @@ namespace Plugin
 					}
 				}
 			}
+
+			Header(Icon::kBulb, T("Advanced"));
+			Field(T("Flicker after fading up"), &Anima::Settings::noticeFlicker,
+				T("A creature's light flickers after Dark until noticed fades it up; off keeps it steady (on by default)."));
 		}
 	}
 

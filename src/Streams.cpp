@@ -9,6 +9,7 @@
 // lives.
 
 #include "Plugin.h"
+#include "Po3Tweaks.h"
 #include "StreamRows.h"
 
 namespace Plugin
@@ -120,8 +121,8 @@ namespace Plugin
 					} else {
 						gNaturalBases.erase(proj->GetFormID());
 					}
-				} else if (form || key.find('~') != std::string::npos) {
-					SKSE::log::info("stream rows: {} names {} - not a projectile of this load order", row.name, key);
+				} else {
+					SKSE::log::info("stream rows: {} names {} - not a projectile of this load order{}", row.name, key, Po3Tweaks::MissingHint(key));
 				}
 			}
 		}

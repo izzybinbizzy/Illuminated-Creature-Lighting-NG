@@ -45,6 +45,7 @@ namespace Plugin
 
 	// ------------------------------------------------------------------ Settings.cpp: IlluminatedCreatureLightingNG\Settings.ini, written by the menu
 	void                          LoadSettings();
+	void                          LoadAdvanced();  // the Advanced Settings file, once at game start, before any light (Anima::gTuning)
 	bool                          SaveSettings();  // any thread; false when the file could not be written (logged)
 	[[nodiscard]] Anima::Settings SettingsNow();
 	void                          UpdateSettings(const std::function<void(Anima::Settings&)>& a_change);  // under the lock, clamped
@@ -59,6 +60,8 @@ namespace Plugin
 	[[nodiscard]] std::vector<std::size_t> RowsOf(RE::Actor* a_actor);
 	// any thread once data load is done: a row may name this character (its race, or a skin holding a row's model); two reads
 	[[nodiscard]] bool CouldLight(RE::Actor* a_actor);
+	// any thread once data load is done: the menu switched this creature off (every switch its body's rows name)
+	[[nodiscard]] bool SwitchedOff(RE::Actor* a_actor, const Anima::Settings& a_s);
 	// a record named "0x<id>~<plugin>"; nullptr when the plugin is not loaded or the text does not read
 	[[nodiscard]] RE::TESForm* FormOfKey(std::string_view a_key);
 	// another mod's Light Placer file names a model of this row
@@ -75,6 +78,7 @@ namespace Plugin
 	// main thread: the settings show this row, no other mod has taken it over and the player has not switched it off on the page
 	[[nodiscard]] bool RowShows(std::size_t a_row, const Anima::Settings& a_s);
 	[[nodiscard]] bool EyesModLoaded();  // any thread once data load is done: JS Emissive Eyes handles the eyes
+	[[nodiscard]] bool BlankGlowArt();   // any thread: a replacer emptied glow art some rows stand for (the draugr eye art)
 	// main thread: every other mod's light on this actor put out or given back by the settings; a_root its stored body, nullptr when it has none yet
 	void               TheirLights(RE::Actor* a_actor, RE::NiAVObject* a_root, const Anima::Settings& a_s, bool a_oursHung);
 	[[nodiscard]] bool OthersLightBodies();  // any thread once data load is done: another mod's Light Placer file names a body or art model
@@ -87,6 +91,7 @@ namespace Plugin
 	// empty for none). Any thread: a creature met in play can add a name.
 	[[nodiscard]] Anima::Lighters          OthersFound();
 	[[nodiscard]] std::vector<std::string> AlsoLitBy(std::size_t a_mod);
+	void                                   ApplyEnbShaderLights(const Anima::Settings& a_s);  // main thread: ENB Lights For Effect Shaders' light off our ghost shaders, or back by its switch
 	[[nodiscard]] std::size_t              CreatureRowCount();
 	[[nodiscard]] std::size_t              FilesRead();
 
@@ -98,8 +103,18 @@ namespace Plugin
 	[[nodiscard]] bool                         OlderCarrierLoaded();  // an Illuminated below 3.1 or a RELight below 4.1 is loaded (they light the moved rows)
 
 	void                      ReadSpellRecords();                             // data load: the records the spell and burst rows name get a light of ours
+	[[nodiscard]] bool        ArtLeftToLightPlacer();                         // Light Placer loaded: it lights the art rows from our own file
+	void                      WarnIfNoLightPlacer(std::string_view a_mod);    // data load: one box on Community Shaders without Light Placer
 	void                      ApplySpellRecords(const Anima::Settings& a_s);  // the settings onto them (data load, the menu)
 	[[nodiscard]] std::size_t SpellRecordCount();
+	// his "Spells too": any creature switched off now (any thread); the spell lights the switches culled on their casters since the
+	// game started: projectiles, explosions, hazards, casting lights, beam row lights (DevBench)
+	[[nodiscard]] bool                         AnyCreatureOff();
+	[[nodiscard]] std::array<std::uint64_t, 5> SwitchCulls();
+	// the trampoline room the spell-light call sites take (SpellLights.cpp): four light-making calls and two updates, 14 bytes each
+	inline constexpr std::size_t kSpellSiteBytes = 6 * 14;
+	// the call that sets a splash's copy up (CreatureLights.cpp InstallImpactCopied), one 5-byte call
+	inline constexpr std::size_t kImpactSiteBytes = 14;
 	// the row that lights this art object (a row's art= line: a hit art, an enchantment's art); fixed after data load, any thread
 	[[nodiscard]] std::optional<std::size_t> ArtRow(const RE::BGSArtObject* a_art);
 	[[nodiscard]] bool                       AnyArtRows();

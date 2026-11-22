@@ -12,6 +12,7 @@
 #include "Plugin.h"
 
 #include <algorithm>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <unordered_map>
@@ -23,8 +24,6 @@ namespace Plugin
 	{
 		constexpr const char* kName = "IlluminatedCreatureLightingNGObjectLight";
 		// a torchbug swarm is dozens of objects: the nearest few carry a light, fewer where a few lights fill a room's budget
-		constexpr std::size_t kCapShaders = 8;
-		constexpr std::size_t kCapPlain = 2;
 		constexpr std::size_t kCostSlot = 8;
 
 		// written once at data load, before the hooks go in; read on any thread after
@@ -56,7 +55,21 @@ namespace Plugin
 		};
 		std::unordered_map<RE::FormID, Object> gObjects;
 
-		[[nodiscard]] std::size_t Cap() { return LightLimitFix() ? kCapShaders : kCapPlain; }
+		// with RE::Light loaded the objects have no cap: as many as RE::Light itself allows (his checklist 629)
+		[[nodiscard]] bool ReLightLoaded()
+		{
+			static const bool loaded = REX::W32::GetModuleHandleA("ReLight.dll") != nullptr;
+			return loaded;
+		}
+
+		// lit objects at once (the Advanced Settings file), none with RE::Light
+		[[nodiscard]] std::size_t Cap()
+		{
+			if (ReLightLoaded()) {
+				return std::numeric_limits<std::size_t>::max();
+			}
+			return LightLimitFix() ? Anima::gTuning.objectsShaders : Anima::gTuning.objectsPlain;
+		}
 
 		// any thread: one of the base objects a row names; the form type first (one read), the table only for a type a row can name
 		[[nodiscard]] std::optional<std::size_t> RowOfBase(const RE::TESForm* a_base)
@@ -330,7 +343,8 @@ namespace Plugin
 		take(handler->GetFormArray<RE::TESObjectACTI>(), gWatchActivators);
 		take(handler->GetFormArray<RE::TESObjectMISC>(), gWatchMisc);
 		take(handler->GetFormArray<RE::TESObjectSTAT>(), gWatchStatics);
-		SKSE::log::info("object lights: {} base object(s) named by {} model(s)", gBases.size(), byModel.size());
+		SKSE::log::info("object lights: {} base object(s) named by {} model(s); {}", gBases.size(), byModel.size(),
+			ReLightLoaded() ? "RE::Light is loaded, so every one is lit (no cap)" : "the nearest are lit, up to the Advanced Settings cap");
 		if (gBases.empty()) {
 			return;
 		}

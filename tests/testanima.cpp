@@ -5,10 +5,15 @@
 // undefined-behavior checkers. The run fails when a check fails, AND when fewer checks ran than kFloor (a test that stopped
 // part way proves nothing).
 
+#include "AdvancedSettingsChecks.h"
 #include "AnimaMath.h"
+#include "EnbShaderLightsChecks.h"
 #include "FloorLightChecks.h"
+#include "Po3TweaksChecks.h"
 #include "RowParkChecks.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
@@ -32,7 +37,8 @@ namespace
 #define CHECK(x) Check((x), #x, __LINE__)
 
 	// the fewest checks a whole run makes (raise it when checks are added; lower it only when checks are removed on purpose)
-	constexpr int kFloor = 272 + FloorLightChecks::kCount + RowParkChecks::kCount;
+	constexpr int kFloor = 285 + 9 + EnbShaderLightsChecks::kCount + FloorLightChecks::kCount + RowParkChecks::kCount + AdvancedSettingsChecks::kCount +
+	                       AdvancedSettingsChecks::kTableCount + AdvancedSettingsChecks::kShippedCount + Po3TweaksChecks::kCount;
 
 	[[nodiscard]] bool Near(float a, float b, float a_eps = 0.001f) { return std::fabs(a - b) <= a_eps; }
 
@@ -226,7 +232,7 @@ namespace
 		std::istringstream in(out.str());
 		Anima::Settings    r;
 		const auto         keys = Anima::ReadSettings(in, r);
-		CHECK(keys == 13 + Anima::kOthers + Anima::kExtraCount);
+		CHECK(keys == 15 + Anima::kOthers + Anima::kExtraCount);
 		CHECK(!r.on && !r.kinds[2] && r.kinds[1] && r.natural && r.brightness == 150 && r.reach == 75 && !r.flicker && r.deathFade);
 		CHECK(r.theirs[0] && !r.theirs[1] && r.theirs[2] && !r.theirs[3]);
 		CHECK(!r.extras[0]);                                                   // a light of its own switch keeps its off through the file
@@ -267,6 +273,35 @@ namespace
 		Anima::Settings    nr;
 		Anima::ReadSettings(nIn, nr);
 		CHECK(nr.noticed);
+
+		// the flicker after the fade-up: on by default, its off written and read back; it stops the flicker only with dark until noticed on,
+		// and the flicker switch still turns every flicker off
+		CHECK(n.noticeFlicker && nr.noticeFlicker);
+		n.noticeFlicker = false;
+		std::ostringstream fOut;
+		Anima::WriteSettings(n, fOut);
+		std::istringstream fIn(fOut.str());
+		Anima::Settings    fr;
+		Anima::ReadSettings(fIn, fr);
+		CHECK(!fr.noticeFlicker && fr.noticed && !Anima::Flickers(fr));
+		fr.noticed = false;
+		CHECK(Anima::Flickers(fr));
+		fr.flicker = false;
+		fr.noticed = true;
+		fr.noticeFlicker = true;
+		CHECK(!Anima::Flickers(fr));
+		CHECK(Anima::Flickers(Anima::Settings{}));
+
+		// the switch for glow art a replacer emptied: off by default, written and read back on
+		Anima::Settings g;
+		CHECK(!g.noGlowUndead);
+		g.noGlowUndead = true;
+		std::ostringstream gOut;
+		Anima::WriteSettings(g, gOut);
+		std::istringstream gIn(gOut.str());
+		Anima::Settings    gr;
+		Anima::ReadSettings(gIn, gr);
+		CHECK(gr.noGlowUndead);
 	}
 
 	void Showing()
@@ -299,6 +334,14 @@ namespace
 		Anima::SetCreatureOn(off, "Draugr", false);
 		CHECK(nr.size() == 3 && !Anima::Shown(nr[0], off) && !Anima::Shown(nr[1], off) && Anima::Shown(nr[2], off));
 
+		// his "Spells too": a creature is switched off when every switch its body's rows name is off; a body with no switch never is
+		Anima::Settings sw;
+		CHECK(!Anima::AllSwitchedOff({}, sw) && !Anima::AllSwitchedOff({ "Spriggan" }, sw));
+		Anima::SetCreatureOn(sw, "Spriggan", false);
+		CHECK(Anima::AllSwitchedOff({ "Spriggan" }, sw) && !Anima::AllSwitchedOff({ "Spriggan", "Burnt Spriggan" }, sw));
+		Anima::SetCreatureOn(sw, "Burnt Spriggan", false);
+		CHECK(Anima::AllSwitchedOff({ "Spriggan", "Burnt Spriggan" }, sw) && !Anima::AllSwitchedOff({}, sw));
+
 		// a row of its own switch (his 575): read off switch=, shown only while that switch is on; a switch name no menu has leaves the row
 		// out (counted), so no light is left on with nothing to turn it off
 		std::istringstream steam(
@@ -317,6 +360,27 @@ namespace
 			e.kinds[static_cast<std::size_t>(Anima::Kind::kSpell)] = false;
 			CHECK(!Anima::Shown(rows[0], e));  // its kind's switch still rules it
 		}
+		// glow art a replacer emptied (blankif=): read off the row, the model in its normal form; a row whose art draws nothing waits for its
+		// switch, one whose art draws is lit as before, and a model file with no shape, strip or particle draws nothing
+		std::istringstream eyes(
+			"[creature]\nname=Draugr eyes\nrace=DraugrRace\nkind=eyes\ncolor=80,218,255\n"
+			"blankif=Meshes\\Actors\\Draugr\\Character Assets\\FXDraugrMaleEyes.nif\n");
+		std::size_t sEyes = 0;
+		auto        er = Anima::ReadCreatures(eyes, sEyes);
+		CHECK(er.size() == 1 && sEyes == 0);
+		if (er.size() == 1) {
+			CHECK(er[0].blankIf == std::vector<std::string>{ "actors\\draugr\\character assets\\fxdraugrmaleeyes.nif" } && !er[0].blank);
+			Anima::Settings b;
+			CHECK(Anima::Shown(er[0], b));
+			er[0].blank = true;
+			CHECK(!Anima::Shown(er[0], b));
+			b.noGlowUndead = true;
+			CHECK(Anima::Shown(er[0], b));
+		}
+		CHECK(!Anima::DrawsSomething("Gamebryo File Format, Version 20.2.0.7 BSFadeNode BSXFlags NiStringsExtraData NiNode NiNode"));
+		CHECK(Anima::DrawsSomething("Gamebryo BSFadeNode NiNode BSTriShape BSEffectShaderProperty"));
+		CHECK(Anima::DrawsSomething("Gamebryo NiNode NiParticleSystem") && Anima::DrawsSomething("Gamebryo NiNode NiTriStrips") && !Anima::DrawsSomething(""));
+
 		Anima::Row stray;
 		stray.extra = Anima::kExtraCount;  // never made by the reader; a bad index lights nothing rather than reading past the switches
 		CHECK(!Anima::Shown(stray, Anima::Settings{}));
@@ -665,18 +729,77 @@ namespace
 		CHECK(Near(calmDown.back().value, 1.5f * Anima::kSearchShare) && Near(calmDown.back().time, Anima::kNoticeDownSeconds, 0.05f));
 		const auto dark = Anima::NoticeKeys(1.5f, Pulse::Kind::kFire, 7u, 0.0f, 0.0f);
 		CHECK(std::ranges::all_of(dark, [](const Anima::Key& a_k) { return Near(a_k.value, 0.0f); }) && dark.back().time < 5.0f);
+		// a flickering ease is only the ease: it ends on the first key of the endless flicker it is handed to at its share, so the light never
+		// jumps at the hand-over, and its flicker is that loop's own last stretch
 		const auto flame = Anima::NoticeKeys(1.5f, Pulse::Kind::kFire, 7u, 0.0f, 1.0f);
-		CHECK(flame.back().time > Anima::kCastSeconds && Near(flame.front().value, 0.0f));
+		const auto flameLoop = Anima::FadeKeys(1.5f, Pulse::Kind::kFire, 7u, Anima::kLoopSeconds, false);
+		CHECK(Near(flame.back().time, Anima::kNoticeUpSeconds, 0.05f) && Near(flame.front().value, 0.0f));
+		CHECK(Near(flame.back().value, flameLoop.front().value, 1e-4f));
+		const auto searching = Anima::NoticeKeys(1.5f, Pulse::Kind::kShock, 9u, 1.5f, Anima::kSearchShare);
+		const auto searchLoop = Anima::FadeKeys(1.5f * Anima::kSearchShare, Pulse::Kind::kShock, 9u, Anima::kLoopSeconds, false);
+		CHECK(Near(searching.back().time, Anima::kNoticeDownSeconds, 0.05f) && Near(searching.back().value, searchLoop.front().value, 1e-4f));
+		// the loop's fade at any moment is the key FadeKeys gives it there, its seam included
+		bool same = true;
+		for (std::size_t i = 0; i < flameLoop.size(); i += 7) {
+			same = same && Near(Anima::LoopFade(1.5f, Pulse::Kind::kFire, 7u, flameLoop[i].time), flameLoop[i].value, 1e-4f);
+		}
+		CHECK(same && Near(Anima::LoopFade(1.5f, Pulse::Kind::kFire, 7u, Anima::kLoopSeconds), flameLoop.back().value, 1e-4f));
+		// only a flickering light with something to show is handed over; a steady or dark one holds the ease's end
+		CHECK(Anima::HandsOver(Pulse::Kind::kFire, 1.0f) && Anima::HandsOver(Pulse::Kind::kShock, Anima::kSearchShare));
+		CHECK(!Anima::HandsOver(Pulse::Kind::kNone, 1.0f) && !Anima::HandsOver(Pulse::Kind::kFire, 0.0f));
+		// the ease has run out once the dimmer's own run time reaches its last key; a dimmer just started still shows the run before it
+		// (its last time is the game's start mark), and that is no answer
+		CHECK(!Anima::KeysRunOut(Anima::kNotRunYet, 30.0f, Anima::kNoticeUpSeconds));
+		CHECK(!Anima::KeysRunOut(0.4f, 1.0f, Anima::kNoticeUpSeconds) && Anima::KeysRunOut(2.0f, 1.5f, Anima::kNoticeUpSeconds));
+		CHECK(Anima::KeysRunOut(9.0f, 3.2f, Anima::kNoticeDownSeconds) && !Anima::KeysRunOut(9.0f, 2.9f, Anima::kNoticeDownSeconds));
 		// a creature lit part way through its fight starts at the state the game last announced for it; a change part way through an ease
 		// starts at the fade the light shows - a flickering one included, and above full (a cast's surge) - and a fade that cannot be read
 		// starts from the full fade at the share it knew
-		CHECK(Anima::StartState(2, true) == 2 && Anima::StartState(std::nullopt, true) == 1 && Anima::StartState(std::nullopt, false) == 0);
+		CHECK(Anima::StartState(true, true) == 2 && Anima::StartState(true, false) == 1 && Anima::StartState(false, true) == 0 &&
+			  Anima::StartState(false, false) == 0);
+		CHECK(Near(Anima::NoticeShare(Anima::StartState(true, true)), Anima::kSearchShare));  // searching at a save's load: half, never full or dark
 		CHECK(Near(Anima::StartFade(0.3f, 1.5f, 1.0f), 0.3f) && Near(Anima::StartFade(2.4f, 1.5f, 0.5f), 2.4f) &&
 			  Near(Anima::StartFade(std::nanf(""), 1.5f, 0.5f), 0.75f) && Near(Anima::StartFade(-1.0f, 1.5f, 0.0f), 0.0f));
 		const auto cutShort = Anima::NoticeKeys(1.5f, Pulse::Kind::kFire, 7u, 0.3f, 0.0f);                // a flickering rise ended at 0.3
 		const auto inSurge = Anima::NoticeKeys(1.5f, Pulse::Kind::kFire, 7u, 2.4f, Anima::kSearchShare);  // a search starts mid-surge
 		CHECK(Near(cutShort.front().value, 0.3f) && Near(cutShort.back().value, 0.0f) && Near(inSurge.front().value, 2.4f) &&
-			  Near(inSurge[static_cast<std::size_t>(Anima::kNoticeDownSeconds * Anima::kKeysPerSecond) + 1].value, 1.5f * Anima::kSearchShare, 0.5f));
+			  Near(inSurge.back().value, 1.5f * Anima::kSearchShare, 0.5f));
+	}
+
+	// the Advanced Settings file: the shared reader and writer, this mod's knobs, the file the download ships, and what each value moves
+	void Advanced()
+	{
+		AdvancedSettingsChecks::Run(Check);
+		AdvancedSettingsChecks::Table(Check, Anima::kAdvancedKnobs);
+		AdvancedSettingsChecks::Shipped(Check, "package/SKSE/Plugins/IlluminatedCreatureLightingNG", Anima::kAdvancedTitle, Anima::kAdvancedKnobs);
+		// the file at its defaults is the mod as it was: every value the constant it replaced
+		const auto          d = Anima::TuningOf(AdvancedSettings::Defaults(Anima::kAdvancedKnobs));
+		const Anima::Tuning t{};
+		CHECK(d.litShaders == Anima::kLitShaders && d.litPlain == Anima::kLitPlain && d.objectsShaders == Anima::kObjectsShaders &&
+			  d.objectsPlain == Anima::kObjectsPlain);
+		CHECK(Near(d.flickerSwing, 1.0f) && Near(d.deathFadeSeconds, Anima::kDeathFadeSeconds) && Near(d.emberShare, Anima::kEmberShare) &&
+			  Near(d.surgeSeconds, Anima::kSurgeSeconds) && Near(d.surgeLift, Anima::kSurgeLift) && Near(d.searchShare, Anima::kSearchShare) &&
+			  Near(d.noticeUpSeconds, Anima::kNoticeUpSeconds) && Near(d.noticeDownSeconds, Anima::kNoticeDownSeconds));
+		CHECK(t.litShaders == d.litShaders && Near(t.noticeDownSeconds, d.noticeDownSeconds) && Near(t.flickerSwing, d.flickerSwing));
+		// each value reaches what it names: the fade-up's length, the search share, the death fade, no flicker at 0, a longer surge
+		Anima::gTuning.noticeUpSeconds = 4.0f;
+		Anima::gTuning.searchShare = 0.25f;
+		Anima::gTuning.deathFadeSeconds = 8.0f;
+		Anima::gTuning.flickerSwing = 0.0f;
+		Anima::gTuning.surgeSeconds = 1.2f;
+		const auto rise = Anima::NoticeKeys(1.5f, Pulse::Kind::kFire, 7u, 0.0f, 1.0f);
+		CHECK(Near(rise.back().time, 4.0f, 0.05f) && Near(Anima::NoticeShare(2), 0.25f));
+		const auto dying = Anima::DeathKeys(1.5f, 0.0f, true);
+		CHECK(Near(dying.back().time, 8.0f) && Near(Anima::DeathShare(4.0f, true, false), 0.5f, 0.01f));
+		const auto flat = Anima::FadeKeys(2.0f, Pulse::Kind::kFire, 7u, Anima::kLoopSeconds, false);
+		CHECK(std::ranges::all_of(flat, [](const Anima::Key& a_k) { return Near(a_k.value, 2.0f); }));
+		CHECK(Anima::SurgeLift(0.9f) > 1.0f && Near(Anima::SurgeLift(1.2f), 1.0f));
+		// values read off the file set the tuning, a count rounded and never below 0
+		const std::array<float, 12> mine{ 4.0f, 2.0f, 0.0f, 1.0f, 0.5f, 6.0f, 0.1f, 1.0f, 1.5f, 0.75f, 2.0f, 5.0f };
+		const auto                  m = Anima::TuningOf(mine);
+		CHECK(m.litShaders == 4 && m.objectsShaders == 0 && Near(m.flickerSwing, 0.5f) && Near(m.noticeDownSeconds, 5.0f) && Near(m.searchShare, 0.75f));
+		Anima::gTuning = {};
+		CHECK(Near(Anima::NoticeShare(2), Anima::kSearchShare) && Near(Anima::NoticeKeys(1.5f, Pulse::Kind::kNone, 7u, 0.0f, 1.0f).back().time, 1.5f, 0.05f));
 	}
 }
 
@@ -695,6 +818,9 @@ int main()
 	TheCap();
 	OverTime();
 	Keys();
+	Advanced();
+	EnbShaderLightsChecks::Run(Check);  // ENB Lights For Effect Shaders: its ini, its shader test, its models
+	Po3TweaksChecks::Run(Check);        // powerofthree's Tweaks: a form key's two spellings, its ini switch, the verdict, both paths
 	FloorLightChecks::Run(Check);
 	RowParkChecks::Run(Check);
 	std::printf("%d passed, %d failed\n", gPassed, gFailed);

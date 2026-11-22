@@ -25,12 +25,9 @@ namespace StreamRows
 		std::unordered_map<RE::FormID, Recipe> gRows;                // projectile base -> its row (main thread after Claim)
 		constexpr std::size_t                  kMostRowLights = 64;  // every row light in the scene together
 		constexpr std::size_t                  kMostPerRow = 20;
-		// off Community Shaders the game lets one piece of ground take only a few lights, so a row of 15 lit only the ground near her
-		// hands; fewer, wider lights reach the whole stream (BeamRow::Lay makes each stronger to keep the row's light)
-		constexpr std::size_t kMostPerRowPlain = 5;
-		constexpr float       kRowPlain = 0.5f;     // every row off Community Shaders
-		constexpr float       kRowHeight = 100.0f;  // a beam's usual height over the ground it lights
-		constexpr int         kShaders = 0, kEnb = 1, kVanilla = 2;
+		constexpr float                        kRowPlain = 0.5f;     // every row off Community Shaders
+		constexpr float                        kRowHeight = 100.0f;  // a beam's usual height over the ground it lights
+		constexpr int                          kShaders = 0, kEnb = 1, kVanilla = 2;
 
 		bool  InverseSquare() { return gHost.inverseSquare && gHost.inverseSquare(); }
 		int   LightingNow() { return gHost.lighting ? gHost.lighting() : kVanilla; }
@@ -45,9 +42,9 @@ namespace StreamRows
 		{
 			switch (a_lighting) {
 			case kVanilla:
-				return 1.1f;
+				return BeamRow::gTune.vanilla.load(std::memory_order_relaxed);
 			case kEnb:
-				return 0.5f;  // the whole stream lit, not washed out
+				return BeamRow::gTune.enb.load(std::memory_order_relaxed);
 			default:
 				return 1.0f;
 			}
@@ -135,8 +132,7 @@ namespace StreamRows
 			std::uint32_t                    frames{ 0 };
 		};
 		std::vector<CloudWait>  gCloudWait;
-		constexpr std::uint32_t kCloudTries = 600;          // about ten seconds of frames: a cone's cast and its cloud's life
-		constexpr float         kCloudReachShaders = 3.0f;  // a row's x1 left Ice Storm's cloud faint on Community Shaders
+		constexpr std::uint32_t kCloudTries = 600;  // about ten seconds of frames: a cone's cast and its cloud's life
 
 		std::atomic<bool> gAwake{ true };
 
@@ -459,7 +455,7 @@ namespace StreamRows
 			}
 			const bool isl = InverseSquare();
 			// one light, not a row: where the inverse-square cap holds, its reach (and with it that cap) is its own
-			const float cloudReach = isl ? kCloudReachShaders : RowReachFor(LightingNow());
+			const float cloudReach = isl ? BeamRow::gTune.cloudReachShaders.load(std::memory_order_relaxed) : RowReachFor(LightingNow());
 			const float reach = rec->second.reach * ReachNow() * cloudReach;
 			const float rowBright = BrightnessNow();
 			const float want = rec->second.fade * rowBright * RowStrengthFor(LightingNow());
@@ -547,7 +543,7 @@ namespace StreamRows
 				if (gRowLights >= kMostRowLights) {
 					SweepGone(scene);
 				}
-				const auto most = InverseSquare() ? kMostPerRow : kMostPerRowPlain;
+				const auto most = InverseSquare() ? kMostPerRow : static_cast<std::size_t>(BeamRow::PlainLights());
 				const auto want = BeamRow::Lay(proj->GetProjectileRuntimeData().range, static_cast<int>(most), a_rec.reach, kRowHeight);
 				n = (std::min)(want.size(), kMostRowLights - (std::min)(gRowLights, kMostRowLights));
 			}
@@ -696,17 +692,23 @@ namespace StreamRows
 		// a row goes with its switch at once; it is hung again when the switch comes back while its projectile still flies: every row a
 		// switch held back is tried once on the next frame
 		gParked.Wake(Ended);
+		// parked after the lock: parking lets ended projectiles go, and a last reference let go under gLiveLock runs the game's release
+		// (our hooked Release3DRelatedData), which takes the lock again on this thread
+		std::vector<RE::NiPointer<RE::TESObjectREFR>> heldBack;
 		{
 			auto*           scene = LightKit::Scene();
 			std::lock_guard l{ gLiveLock };
-			ForgetIf(scene, [](const Live& a_live) {
+			ForgetIf(scene, [&heldBack](const Live& a_live) {
 				const auto rec = gRows.find(a_live.base);
 				const bool off = rec == gRows.end() || !RowOn(rec->second);
 				if (off && rec != gRows.end()) {
-					ParkRow(a_live.beam.get(), RowPark::Why::kHeldBack);
+					heldBack.push_back(a_live.beam);
 				}
 				return off;
 			});
+		}
+		for (const auto& ref : heldBack) {
+			ParkRow(ref.get(), RowPark::Why::kHeldBack);
 		}
 		gAwake.store(true, std::memory_order_relaxed);
 	}
@@ -726,6 +728,8 @@ namespace StreamRows
 				letGo.swap(gLetGo);
 			}
 		}
+		// a projectile parked by its switch that has ended is let go on the next awake frame, not held until the switches move (the lock is free)
+		gParked.Prune(Ended);
 		// a row the light cap held back (or one a switch change woke): tried again while its projectile flies, let go when that ends
 		if (gParked.KeepsAwake()) {
 			bool room = false;

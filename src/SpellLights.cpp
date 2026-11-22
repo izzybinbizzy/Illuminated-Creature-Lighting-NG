@@ -14,9 +14,16 @@
 // hangs an "RL" light on the reference as it loads, so the record keeps its own light and no light of ours is pointed at it. Nothing
 // announces those lights, so each kind of reference RE::Light lights is hooked after it (its Load3D hooks go in at plugin load, ours at
 // data load, so the original call runs its light-making first), and a row the menu switched off culls them there - but never on a record
-// another mod's RE::Light file names too, whose light may be theirs. Without the files no hook goes in at all.
+// another mod's RE::Light file names too, whose light may be theirs.
+//
+// A creature switched off in the menu (his "Spells too"): the records are shared with the player and other casters, so its spells' lights
+// of ours are culled on that one caster as the game makes each: a casting light or a projectile's at the game's own light-making call
+// (the sites RE::Light and RELight hook; Load3D's own body makes no projectile light), an explosion's or a hazard's
+// right after the call in its update that makes it (the places Light Placer wraps), a beam's row of ours on the frames after it loads.
 
 #include "Plugin.h"
+#include "Po3Tweaks.h"
+#include "StreamRows.h"
 
 namespace Plugin
 {
@@ -34,6 +41,7 @@ namespace Plugin
 			const char*         model{ nullptr };  // what RE::Light's mesh keys are matched on; none for a casting art, which it cannot reach
 			bool                inFiles{ false };  // an RE::Light file of ours lights this record
 			bool                shared{ false };   // another mod's RE::Light file names it too: its "RL" light may be theirs, never culled
+			bool                tint{ false };     // a stream row's projectile: its own light worn in the row's color, nothing else of it changed
 		};
 		std::vector<Target> gTargets;
 
@@ -51,6 +59,11 @@ namespace Plugin
 		std::unordered_map<RE::FormID, std::size_t> gInFiles;  // a base record -> its place in gTargets
 		std::vector<LightKit::Relaxed<bool>>        gCull;     // by that place: its row is off, so RE::Light's lights on it go out
 		LightKit::Relaxed<bool>                     gAnyCull{ false };
+		// any creature switched off, set at every settings change; every light of ours a record slot can point at, written at data load;
+		// the spell lights culled on switched-off casters (projectiles, explosions, hazards, casting lights, beam row lights)
+		LightKit::Relaxed<bool>                      gAnyCreatureOff{ false };
+		std::unordered_set<const RE::TESObjectLIGH*> gOurLights;
+		std::array<std::atomic<std::uint64_t>, 5>    gSwitchCulls{};
 
 		// RE::Light named a light of its own "RL" and hung it under the reference; a culled one lights nothing (RELight's Options.cpp way)
 		void CullFileLights(RE::TESObjectREFR* a_ref, RE::NiAVObject* a_node) noexcept
@@ -70,15 +83,192 @@ namespace Plugin
 			});
 		}
 
-		// every class RE::Light hooks for this. With no row off this is the original call and one read
+		// a light the game made from a record of ours (each caller has tested that), on a reference a switched-off creature sent: culled
+		void CullOne(RE::NiLight* a_light, const RE::TESObjectLIGH* a_record, RE::Actor* a_owner, std::size_t a_kind)
+		{
+			if (a_light && a_record && SwitchedOff(a_owner, SettingsNow())) {
+				a_light->SetAppCulled(true);
+				++gSwitchCulls[a_kind];
+			}
+		}
+
+		// a beam's row of ours, which the shared StreamRows hangs under the projectile's root now or on a later frame (a row the light cap
+		// held back is hung on a later retry) and never culls itself: looked at each frame while the projectile flies, so Illuminated's and
+		// RELight's copies of StreamRows stay untouched
+		// The projectile is held by pointer only until the first look (its Load3D may run on a loader thread, where no handle is made); that
+		// look, on the main thread, takes its handle and every later one resolves it again, so a projectile that has died is never kept
+		void CullRowsLater(RE::NiPointer<RE::TESObjectREFR> a_first, RE::ObjectRefHandle a_handle, int a_looks)
+		{
+			auto* tasks = SKSE::GetTaskInterface();
+			if (!tasks) {
+				return;
+			}
+			tasks->AddUITask([a_first, a_handle, a_looks]() {
+				Guarded("a switched-off creature's beam", [&]() {
+					const auto handle = a_first ? a_first->GetHandle() : a_handle;
+					const auto ref = a_first ? a_first : handle.get();
+					auto*      root = ref && !ref->IsDeleted() ? ref->Get3D() : nullptr;
+					if (root) {
+						RE::BSVisit::TraverseScenegraphLights(root, [](RE::NiPointLight* a_light) {
+							if (StreamRows::IsRowLight(a_light) && !a_light->GetAppCulled()) {
+								a_light->SetAppCulled(true);
+								++gSwitchCulls[4];
+							}
+							return RE::BSVisit::BSVisitControl::kContinue;
+						});
+					}
+					if (root && handle && a_looks > 1) {
+						CullRowsLater(nullptr, handle, a_looks - 1);
+					}
+				});
+			});
+		}
+
+		// a casting light (its caster made it) or a projectile's (its shooter sent it), as the game's call made it; any thread, so only
+		// the fresh light's own flag is written
+		void CullMade(RE::NiLight* a_made, const RE::TESObjectLIGH* a_record, RE::TESObjectREFR* a_ref)
+		{
+			if (!a_made || !a_ref || !gOurLights.contains(a_record)) {
+				return;
+			}
+			if (auto* caster = a_ref->As<RE::Actor>()) {
+				CullOne(a_made, a_record, caster, 3);
+			} else if (auto* projectile = a_ref->As<RE::Projectile>()) {
+				const auto shooter = projectile->GetProjectileRuntimeData().shooter.get();
+				CullOne(a_made, a_record, shooter ? shooter->As<RE::Actor>() : nullptr, 0);
+			}
+		}
+
+		// a beam's row of ours on a switched-off creature's projectile (its own light is culled where the game makes it, LightSite)
+		void CullSwitchedOff(RE::Projectile* a_ref)
+		{
+			const auto* base = a_ref->GetBaseObject() ? a_ref->GetBaseObject()->As<RE::BGSProjectile>() : nullptr;
+			if (!base || !StreamRows::Claims(base->GetFormID())) {
+				return;
+			}
+			const auto shooter = a_ref->GetProjectileRuntimeData().shooter.get();
+			if (SwitchedOff(shooter ? shooter->As<RE::Actor>() : nullptr, SettingsNow())) {
+				// about five seconds at 60 frames, longer than any bolt or spray flies
+				CullRowsLater(RE::NiPointer<RE::TESObjectREFR>(a_ref), {}, 300);
+			}
+		}
+
+		// an explosion's or a hazard's light, after its update made it: one already culled, or not ours, is passed over (each update while
+		// a creature is switched off; an explosion lives a second or two)
+		void CullSwitchedOff(RE::Explosion* a_ref)
+		{
+			auto&       d = a_ref->GetExplosionRuntimeData();
+			const auto* base = a_ref->GetBaseObject() ? a_ref->GetBaseObject()->As<RE::BGSExplosion>() : nullptr;
+			if (!d.light || d.light->GetAppCulled() || !base || !gOurLights.contains(base->data.light)) {
+				return;
+			}
+			const auto owner = d.actorOwner.get();
+			CullOne(d.light.get(), base->data.light, owner.get(), 1);
+		}
+
+		void CullSwitchedOff(RE::Hazard* a_ref)
+		{
+			// the record the game makes its light from: the hazard's own record field, as its light call reads it
+			auto&       d = a_ref->GetHazardRuntimeData();
+			const auto* base = d.hazard;
+			if (!d.light || d.light->GetAppCulled() || !base || !gOurLights.contains(base->data.light)) {
+				return;
+			}
+			const auto owner = d.ownerActor.get();
+			CullOne(d.light.get(), base->data.light, owner.get(), 2);
+		}
+
+		// the game's own light-making call for a casting light and a projectile's light (TESObjectLIGH::GenDynamic, at the sites RE::Light
+		// and RELight hook - their method, Truman's; ours goes in at data load, after theirs, so the light is made through them first). It
+		// also runs on the game's loader and job threads. With no creature switched off: the original call and one read
+		using MakeLightFn = RE::NiPointLight*(RE::TESObjectLIGH*, RE::TESObjectREFR*, RE::NiNode*, bool, bool, bool);
+		template <std::size_t N>
+		struct LightSite
+		{
+			static RE::NiPointLight* thunk(RE::TESObjectLIGH* a_light, RE::TESObjectREFR* a_ref, RE::NiNode* a_node, bool a_forceDynamic,
+				bool a_useLightRadius, bool a_affectRequesterOnly)
+			{
+				auto* made = func(a_light, a_ref, a_node, a_forceDynamic, a_useLightRadius, a_affectRequesterOnly);
+				if (made && gAnyCreatureOff) {
+					Guarded("a switched-off creature's spell light", [&]() { CullMade(made, a_light, a_ref); });
+				}
+				return made;
+			}
+			static inline REL::Relocation<MakeLightFn> func;
+		};
+
+		// an explosion's and a hazard's update: the call in it that makes the light on its first pass (the places Light Placer and
+		// Illuminated wrap), then a switched-off creature's light culled. The update's time step is still live at the call (read in
+		// Ghidra), so it is passed on. With no creature switched off: the original call and one read
+		template <class T>
+		struct UpdateSite
+		{
+			static bool thunk(T* a_this, float a_delta)
+			{
+				const bool result = func(a_this, a_delta);
+				if (gAnyCreatureOff && a_this) {
+					Guarded("a switched-off creature's burst", [a_this]() { CullSwitchedOff(a_this); });
+				}
+				return result;
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		// the six call sites, at data load (after every plugin loaded): the Address Library's places on SE and AE; a site whose call is not
+		// there (another plugin rewrote it) is left alone. None in VR, where this plugin has no trampoline
+		void InstallSwitchSites()
+		{
+			if (REL::Module::IsVR()) {
+				SKSE::log::info("creature switches: VR - a switched-off creature's casting lights, bolts and bursts keep their light");
+				return;
+			}
+			auto& trampoline = SKSE::GetTrampoline();
+			if (trampoline.free_size() < kSpellSiteBytes) {
+				SKSE::log::warn("creature switches: {} of the {} trampoline bytes free; a switched-off creature's spells keep their light", trampoline.free_size(),
+					kSpellSiteBytes);
+				return;
+			}
+			std::size_t hooked = 0, wanted = 0;
+			const auto  wrap = [&](std::uintptr_t a_site, auto& a_next, auto a_thunk, std::string_view a_what) {
+				++wanted;
+				if (!LightKit::IsCallAt(a_site)) {
+					SKSE::log::warn("creature switches: {} is not the call it should be (another plugin rewrote it?); left alone", a_what);
+					return;
+				}
+				// trampoline sites: 6
+				a_next = trampoline.write_call<5>(a_site, a_thunk);
+				++hooked;
+			};
+			using Site = REL::Relocation<std::uintptr_t>;
+			wrap(Site{ RELOCATION_ID(33603, 34381), REL::VariantOffset(0xAC, 0xE2, 0xAC) }.address(), LightSite<0>::func, LightSite<0>::thunk, "a casting light's call");
+			wrap(Site{ RELOCATION_ID(33391, 34151), REL::VariantOffset(0x86, 0xCD, 0x86) }.address(), LightSite<1>::func, LightSite<1>::thunk, "a casting light's second call");
+			wrap(Site{ RELOCATION_ID(42965, 44222), REL::VariantOffset(0x58, 0x36D, 0x58) }.address(), LightSite<2>::func, LightSite<2>::thunk, "a projectile light's call");
+			if (REL::Module::IsAE()) {
+				// the casting art's own light call exists on AE only (CheckAttachCastingArt)
+				wrap(Site{ RELOCATION_ID(33403, 34185), 0x407 }.address(), LightSite<3>::func, LightSite<3>::thunk, "the casting art's light call");
+			}
+			wrap(Site{ RELOCATION_ID(42664, 43836), 0x11 }.address(), UpdateSite<RE::Explosion>::func, UpdateSite<RE::Explosion>::thunk, "the explosion update's call");
+			wrap(Site{ RELOCATION_ID(42791, 43959), REL::VariantOffset(0x11, 0x1F, 0x11) }.address(), UpdateSite<RE::Hazard>::func, UpdateSite<RE::Hazard>::thunk,
+				"the hazard update's call");
+			SKSE::log::info("creature switches: {} of {} spell-light call sites hooked", hooked, wanted);
+		}
+
+		// every class a record of ours makes and RE::Light hooks. With no row off and no creature switched off: the original call, two reads
 		template <class T>
 		struct FileLoad3D
 		{
 			static RE::NiAVObject* thunk(T* a_this, bool a_background)
 			{
 				auto* node = func(a_this, a_background);
-				if (gAnyCull && node && a_this) {
-					CullFileLights(a_this, node);
+				if (node && a_this && (gAnyCull || gAnyCreatureOff)) {
+					if (gAnyCull) {
+						CullFileLights(a_this, node);
+					}
+					if constexpr (std::is_base_of_v<RE::Projectile, T>) {
+						if (gAnyCreatureOff) {
+							Guarded("a switched-off creature's beam", [a_this]() { CullSwitchedOff(a_this); });
+						}
+					}
 				}
 				return node;
 			}
@@ -132,9 +322,12 @@ namespace Plugin
 							}
 						}
 					}
+					// RE::Light names a base form only as "0x<id>~<plugin>": an editor ID there is not one of its lights
 					if (const auto id = entry.find("baseID"); id != entry.end() && id->is_string()) {
-						if (const auto* form = FormOfKey(id->get<std::string>())) {
-							a_out.bases.insert(form);
+						if (const auto text = id->get<std::string>(); Po3TweaksText::ParseKey(text).kind == Po3TweaksText::Key::kFormID) {
+							if (const auto* form = FormOfKey(text)) {
+								a_out.bases.insert(form);
+							}
 						}
 					}
 				}
@@ -172,17 +365,23 @@ namespace Plugin
 			}
 			SKSE::log::info("creature spells: RE::Light runs with our files: {} record(s) lit by them, {} also named by another mod's file (never culled)",
 				gInFiles.size(), shared);
-			if (gInFiles.empty()) {
-				return;
-			}
+		}
+
+		// the record hooks, after RE::Light's (theirs at plugin load, these at data load): its files' lights culled where a row is off, and a
+		// switched-off creature's beam rows culled (every projectile class); the explosion and the hazard only for the files
+		void InstallRecordHooks()
+		{
+			FileLoad3D<RE::FlameProjectile>::Install();
 			FileLoad3D<RE::BarrierProjectile>::Install();
 			FileLoad3D<RE::BeamProjectile>::Install();
 			FileLoad3D<RE::ConeProjectile>::Install();
 			FileLoad3D<RE::MissileProjectile>::Install();
 			FileLoad3D<RE::ArrowProjectile>::Install();
 			FileLoad3D<RE::GrenadeProjectile>::Install();
-			FileLoad3D<RE::Hazard>::Install();
-			FileLoad3D<RE::Explosion>::Install();
+			if (!gInFiles.empty()) {
+				FileLoad3D<RE::Hazard>::Install();
+				FileLoad3D<RE::Explosion>::Install();
+			}
 		}
 
 		// a light of ours for a row, copied from the record's own light (its flags and model) or the game's plain white one
@@ -197,8 +396,9 @@ namespace Plugin
 			out->emittanceColor = a_base->emittanceColor;
 			out->lensFlare = a_base->lensFlare;
 			out->SetModel(a_base->GetModel());
-			out->data.color = RE::Color(static_cast<std::uint8_t>(a_row.rgb[0]), static_cast<std::uint8_t>(a_row.rgb[1]),
-				static_cast<std::uint8_t>(a_row.rgb[2]), 0);
+			// read after ReadLighting: the lighting does not change within a game
+			const auto& rgb = InverseSquare() && a_row.rgbIsl ? *a_row.rgbIsl : a_row.rgb;
+			out->data.color = RE::Color(static_cast<std::uint8_t>(rgb[0]), static_cast<std::uint8_t>(rgb[1]), static_cast<std::uint8_t>(rgb[2]), 0);
 			return out;
 		}
 
@@ -221,14 +421,14 @@ namespace Plugin
 			}
 		}
 
-		void Add(RE::TESObjectLIGH*& a_slot, std::size_t a_row, const RE::TESObjectLIGH* a_white, const RE::TESForm* a_record, const char* a_model)
+		void Add(RE::TESObjectLIGH*& a_slot, std::size_t a_row, const RE::TESObjectLIGH* a_white, const RE::TESForm* a_record, const char* a_model, bool a_tint)
 		{
 			if (std::ranges::any_of(gTargets, [&](const Target& a_t) { return a_t.slot == &a_slot; })) {
 				return;  // the first row that names a record wins
 			}
 			auto* ours = MakeLight(Rows()[a_row], a_slot ? a_slot : a_white);
 			if (ours) {
-				gTargets.push_back({ &a_slot, a_slot, ours, a_row, a_record, a_model, false });
+				gTargets.push_back({ &a_slot, a_slot, ours, a_row, a_record, a_model, false, false, a_tint });
 			}
 		}
 
@@ -270,6 +470,12 @@ namespace Plugin
 			if (byModel.empty()) {
 				return;
 			}
+			// Light Placer lights these art rows from our own file in LightPlacer\IlluminatedCreatureLightingNG (his checklist 627; it is required
+			// on Community Shaders): wherever it runs, ours stands down, so no art is lit twice
+			if (ArtLeftToLightPlacer()) {
+				SKSE::log::info("creature spells: {} art row model(s) left to Light Placer, which lights them from our own file", byModel.size());
+				return;
+			}
 			for (const auto* art : LightKit::FormsOf<RE::BGSArtObject>()) {
 				const char* model = art ? art->GetModel() : nullptr;
 				if (const auto it = model && *model ? byModel.find(Anima::NormalPath(model)) : byModel.end(); it != byModel.end()) {
@@ -278,6 +484,22 @@ namespace Plugin
 			}
 			SKSE::log::info("creature spells: {} art object(s) lit as their effects start", gArts.size());
 		}
+	}
+
+	bool ArtLeftToLightPlacer()
+	{
+		static const bool loaded = REX::W32::GetModuleHandleA("po3_LightPlacer.dll") != nullptr;
+		return loaded;
+	}
+
+	void WarnIfNoLightPlacer(std::string_view a_mod)
+	{
+		if (ArtLeftToLightPlacer() || LightingFound() != Lighting::kShaders) {
+			return;
+		}
+		SKSE::log::error("Light Placer is required on Community Shaders and is not loaded - this mod lights the spell art glow itself until it is installed");
+		const auto text = std::format("{} needs Light Placer on Community Shaders. Install Light Placer from Nexus (mod 127557).", a_mod);
+		RE::DebugMessageBox(text.c_str());
 	}
 
 	void ReadSpellRecords()
@@ -303,8 +525,8 @@ namespace Plugin
 			const auto it = byModel.find(Anima::NormalPath(a_model));
 			return it != byModel.end() ? std::optional<std::size_t>(it->second) : std::nullopt;
 		};
-		// a projectile a stream row claims keeps its own light whatever another row names it by, record or model: a row and our record
-		// light on one breath would light it twice
+		// a projectile a stream row claims wears its own light in the row's color, as Illuminated drew it: no model-matched row lights it,
+		// and only a row naming its record by form dresses it instead (the spider's bolt, whose own light Illuminated made from its data)
 		std::unordered_set<const RE::BGSProjectile*> streamed;
 		for (const auto& row : rows) {
 			if (row.stream != Anima::Stream::kNone) {
@@ -324,49 +546,65 @@ namespace Plugin
 			for (const auto& key : rows[i].records) {
 				auto* form = FormOfKey(key);
 				if (auto* p = form ? form->As<RE::BGSProjectile>() : nullptr) {
-					if (streamed.contains(p)) {
-						continue;  // drawn by its stream row, which keeps the projectile's own light
-					}
-					Add(p->data.light, i, white, p, p->GetModel());
+					Add(p->data.light, i, white, p, p->GetModel(), false);
 				} else if (auto* e = form ? form->As<RE::BGSExplosion>() : nullptr) {
-					Add(e->data.light, i, white, e, e->GetModel());
+					Add(e->data.light, i, white, e, e->GetModel(), false);
 				} else if (auto* h = form ? form->As<RE::BGSHazard>() : nullptr) {
-					Add(h->data.light, i, white, h, h->GetModel());
+					Add(h->data.light, i, white, h, h->GetModel(), false);
 				} else if (auto* m = form ? form->As<RE::EffectSetting>() : nullptr) {
-					Add(m->data.light, i, white, m, nullptr);
-				} else if (form || key.find('~') != std::string::npos) {
-					SKSE::log::info("creature spells: {} names {} - not a projectile, explosion, hazard or magic effect of this load order",
-						rows[i].name, key);
+					Add(m->data.light, i, white, m, nullptr, false);
+				} else {
+					SKSE::log::info("creature spells: {} names {} - not a projectile, explosion, hazard or magic effect of this load order{}",
+						rows[i].name, key, Po3Tweaks::MissingHint(key));
+				}
+			}
+		}
+		// then each stream row's projectiles that have a light of their own: that light in the row's color, its numbers left as they are
+		for (std::size_t i = 0; i < rows.size(); ++i) {
+			if (rows[i].stream == Anima::Stream::kNone) {
+				continue;
+			}
+			for (const auto& key : rows[i].records) {
+				auto* form = FormOfKey(key);
+				if (auto* p = form ? form->As<RE::BGSProjectile>() : nullptr; p && p->data.light) {
+					Add(p->data.light, i, white, p, p->GetModel(), true);
 				}
 			}
 		}
 		if (!byModel.empty()) {
 			for (auto* p : LightKit::FormsOf<RE::BGSProjectile>()) {
 				if (const auto r = p && !streamed.contains(p) ? rowOf(p->GetModel()) : std::nullopt) {
-					Add(p->data.light, *r, white, p, p->GetModel());
+					Add(p->data.light, *r, white, p, p->GetModel(), false);
 				}
 			}
 			for (auto* e : LightKit::FormsOf<RE::BGSExplosion>()) {
 				if (const auto r = e ? rowOf(e->GetModel()) : std::nullopt) {
-					Add(e->data.light, *r, white, e, e->GetModel());
+					Add(e->data.light, *r, white, e, e->GetModel(), false);
 				}
 			}
 			for (auto* h : LightKit::FormsOf<RE::BGSHazard>()) {
 				if (const auto r = h ? rowOf(h->GetModel()) : std::nullopt) {
-					Add(h->data.light, *r, white, h, h->GetModel());
+					Add(h->data.light, *r, white, h, h->GetModel(), false);
 				}
 			}
 			// a magic effect's casting light shows while its casting art is in the caster's hands (or a creature's mouth)
 			for (auto* m : LightKit::FormsOf<RE::EffectSetting>()) {
 				const auto* art = m ? m->data.castingArt : nullptr;
 				if (const auto r = art ? rowOf(art->GetModel()) : std::nullopt) {
-					Add(m->data.light, *r, white, m, nullptr);
+					Add(m->data.light, *r, white, m, nullptr, false);
 				}
 			}
 		}
 		SKSE::log::info("creature spells: {} record(s) given a light of ours", gTargets.size());
 		ReadArts();
 		FindFileRows();
+		for (const auto& t : gTargets) {
+			gOurLights.insert(t.ours);
+		}
+		if (!gTargets.empty()) {
+			InstallRecordHooks();
+			InstallSwitchSites();
+		}
 	}
 
 	std::optional<std::size_t> ArtRow(const RE::BGSArtObject* a_art)
@@ -427,16 +665,34 @@ namespace Plugin
 				anyCull = anyCull || cull;
 			}
 			const bool ours = shown && !t.inFiles;
-			if (ours) {
+			// a tint keeps its own light's numbers: Illuminated left a copy of the game's light unscaled, only its color set
+			if (ours && !t.tint) {
 				Dress(t.ours, rows[t.row], a_s);
+			} else if (ours) {
+				// Illuminated's copy wears its row's strength and reach (the game's own numbers for these lights), not the load order's: another
+				// mod raising the dragon fire light to 13 made ours four times Illuminated's. Only the Brightness slider reaches it
+				t.ours->fade = rows[t.row].strength * static_cast<float>(a_s.brightness) / 100.0f;
+				t.ours->data.radius = static_cast<std::uint32_t>(rows[t.row].reach);
 			}
 			*t.slot = ours ? t.ours : t.own;
 		}
 		gAnyCull = anyCull;
+		gAnyCreatureOff = a_s.creaturesOff && !a_s.creaturesOff->empty();
 	}
 
 	std::size_t SpellRecordCount()
 	{
 		return gTargets.size();
+	}
+
+	bool AnyCreatureOff()
+	{
+		return gAnyCreatureOff;
+	}
+
+	std::array<std::uint64_t, 5> SwitchCulls()
+	{
+		return { gSwitchCulls[0].load(std::memory_order_relaxed), gSwitchCulls[1].load(std::memory_order_relaxed), gSwitchCulls[2].load(std::memory_order_relaxed),
+			gSwitchCulls[3].load(std::memory_order_relaxed), gSwitchCulls[4].load(std::memory_order_relaxed) };
 	}
 }

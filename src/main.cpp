@@ -38,6 +38,7 @@
 
 #include "FloorLightFix.h"
 #include "Plugin.h"
+#include "Po3Tweaks.h"
 #include "RuntimeGuard.h"
 #include "Translation.h"
 
@@ -55,7 +56,7 @@ namespace
 		ApplySpellRecords(SettingsNow());
 		InstallStreams();
 		InstallLights();  // before the menu's steps: a throw in them leaves the creatures lit
-		SKSE::log::info("{}", Translation::Load("Data/SKSE/Plugins/IlluminatedCreatureLightingNG/Translation.json"));
+		SKSE::log::info("{}", Translation::Load("IlluminatedCreatureLightingNG"));
 		RegisterMenu();
 		SKSE::log::info("ready in {:.1f} ms", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
 	}
@@ -64,7 +65,13 @@ namespace
 	void OnDataLoaded()
 	{
 		try {
+			Po3Tweaks::Judge(Anima::kAdvancedTitle);  // the mod's name; before any creatures file names a record by editor ID
 			LoadEverything();
+			WarnIfNoLightPlacer(Anima::kAdvancedTitle);  // after the lighting is found
+			// as a task: ENB Lights For Effect Shaders gives the shaders their light in its own data-load pass, which must have run first
+			if (!Later("ENB Lights For Effect Shaders", []() { ApplyEnbShaderLights(SettingsNow()); })) {
+				SKSE::log::warn("ENB Lights For Effect Shaders: the step that takes its light off our ghost shaders could not be queued");
+			}
 		} catch (const std::exception& e) {
 			SKSE::log::critical("the data-load work stopped part way: {} - the steps before it keep their work, the rest is not done this session",
 				e.what());
@@ -76,6 +83,7 @@ namespace
 		switch (a_msg->type) {
 		case SKSE::MessagingInterface::kPostLoad:
 			LoadSettings();  // before DevBench can change one and save the rest
+			LoadAdvanced();
 			OfferToDevBench();
 			break;
 		case SKSE::MessagingInterface::kDataLoaded:
@@ -104,10 +112,13 @@ namespace
 
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
-	// the trampoline holds the Floor Light Fix's two call hooks, the only ones of this plugin that need it; none on VR, where it is not installed
+	// the trampoline holds the Floor Light Fix's two call hooks, the six spell-light call sites (SpellLights.cpp) and a splash's copy call
+	// (CreatureLights.cpp); none on VR, where none is installed
 	SKSE::InitInfo info{};
 	info.trampoline = !REL::Module::IsVR();
-	info.trampolineSize = FloorLightFix::kTrampolineBytes;
+	using Plugin::kImpactSiteBytes;
+	using Plugin::kSpellSiteBytes;
+	info.trampolineSize = FloorLightFix::kTrampolineBytes + kSpellSiteBytes + kImpactSiteBytes;
 	SKSE::Init(a_skse, info);
 	// the wrong game: loaded but idle - a false here makes SKSE add its own "exit game?" box over the guard's
 	if (!RuntimeGuard::RightGame("Illuminated - Creature Lighting NG", "Illuminated - Creature Lighting NG", "Illuminated - Creature Lighting NG - VR")) {

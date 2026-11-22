@@ -542,11 +542,12 @@ namespace Plugin
 		// the records named by form first: they win over a model shared with other records
 		for (std::size_t i = 0; i < rows.size(); ++i) {
 			if (rows[i].stream != Anima::Stream::kNone) {
-				// a stream row's record StreamRows cannot draw (a missile) is lit here like a spell row's record
+				// a stream row's record StreamRows cannot draw (a missile) is lit here: one with a light of its own wears it in the row's color,
+				// as the tint below does, one without gets a light of ours
 				for (const auto& key : rows[i].records) {
 					auto* form = FormOfKey(key);
 					if (auto* p = form ? form->As<RE::BGSProjectile>() : nullptr; p && !RowDrawn(p)) {
-						Add(p->data.light, i, white, p, p->GetModel(), false);
+						Add(p->data.light, i, white, p, p->GetModel(), p->data.light != nullptr);
 					}
 				}
 				continue;

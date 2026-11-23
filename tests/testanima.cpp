@@ -804,8 +804,10 @@ namespace
 		CHECK(Near(offGrid.back().time, 0.23f, 1e-4f) && Near(offGrid.back().value, 0.0f, 1e-5f));
 		const auto offGridDeath = Anima::DeathKeys(1.5f, 0.0f, true);
 		CHECK(Near(offGridDeath.back().time, 0.59f, 1e-4f) && Near(offGridDeath.back().value, 0.0f, 1e-5f));
-		// the shared files' CodeRabbit fixes: a plain translated line may carry a percent sign; a bad run time reads fully lit
-		CHECK(TranslationText::Usable("Brightness", "100%ige Helligkeit") && !TranslationText::Usable("Lit %d", "%s beleuchtet"));
+		// the shared files' CodeRabbit fixes: a plain line's translation may carry a plain percent sign but no conversion of its own
+		// ("%ige" reads as %i); a bad run time reads fully lit
+		CHECK(TranslationText::Usable("Brightness", "100 % Helligkeit") && !TranslationText::Usable("Brightness", "100%ige Helligkeit") &&
+			  !TranslationText::Usable("Lit %d", "%s beleuchtet"));
 		CHECK(Near(LightKit::DimmerShare(0.0f, 1.0f, 1.0f, 0.0f, std::nanf(""), false), 1.0f) &&
 			  Near(LightKit::DimmerShare(0.0f, 1.0f, 1.0f, 0.0f, std::nanf(""), true), 1.0f));
 		CHECK(Anima::SurgeLift(0.9f) > 1.0f && Near(Anima::SurgeLift(1.2f), 1.0f));

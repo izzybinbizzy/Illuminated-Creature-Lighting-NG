@@ -140,9 +140,11 @@ namespace Plugin
 					}
 					// a projectile whose queued load has not stored its body yet, or whose row the cap may free later, is looked at again;
 					// the chain ends when it is gone or its shooter is switched on
-					if (off && proj && !ref->IsDeleted() && handle && proj->GetProjectileRuntimeData().livingTime < kMostCullWatch) {
-						CullRowsLater(nullptr, handle);
-					} else {
+					// the next look goes by the main-thread queue: queued straight back on the UI queue it ran in the same drain, never a frame
+					// later, so the projectile's livingTime never moved and the game froze (the 21:44 hang of 2026-11-22)
+					const bool again = off && proj && !ref->IsDeleted() && handle && proj->GetProjectileRuntimeData().livingTime < kMostCullWatch &&
+					                   Later("a switched-off creature's beam", [handle]() { CullRowsLater(nullptr, handle); });
+					if (!again) {
 						gCullWatched.erase(key);
 					}
 				});

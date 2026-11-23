@@ -25,7 +25,7 @@ namespace EnbShaderLightsChecks
 			std::istringstream in(a_text);
 			return ValidActors(in);
 		};
-		// a missing file or key is everyone (its default); a note is no value; the last line read wins
+		// a missing file or key is the player only (its default, upstream validActors{ 0 }); a note is no value; the last line read wins
 		ENBL_CHECK(valid("") == 0 && valid("[Settings]\nValid Actors = 0\n") == 0 && valid("Valid Actors = 1 ; followers\n") == 1 &&
 				   valid("[Settings]\n;Valid Actors = 0\nValid Actors = 2\n") == 2);
 		// its own shader test

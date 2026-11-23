@@ -334,13 +334,15 @@ namespace
 		Anima::SetCreatureOn(off, "Draugr", false);
 		CHECK(nr.size() == 3 && !Anima::Shown(nr[0], off) && !Anima::Shown(nr[1], off) && Anima::Shown(nr[2], off));
 
-		// his "Spells too": a creature is switched off when every switch its body's rows name is off; a body with no switch never is
+		// his "Spells too": a caster is switched off by the switch its body's first row names, one identity per caster; a second row under
+		// another name (an eyes row named apart) neither keeps it lit nor switches it off; a body with no switch never is
 		Anima::Settings sw;
-		CHECK(!Anima::AllSwitchedOff({}, sw) && !Anima::AllSwitchedOff({ "Spriggan" }, sw));
+		CHECK(!Anima::CasterSwitchedOff({}, sw) && !Anima::CasterSwitchedOff({ "Spriggan" }, sw));
 		Anima::SetCreatureOn(sw, "Spriggan", false);
-		CHECK(Anima::AllSwitchedOff({ "Spriggan" }, sw) && !Anima::AllSwitchedOff({ "Spriggan", "Burnt Spriggan" }, sw));
+		CHECK(Anima::CasterSwitchedOff({ "Spriggan" }, sw) && Anima::CasterSwitchedOff({ "Spriggan", "Spriggan Eyes" }, sw));
+		CHECK(!Anima::CasterSwitchedOff({ "Burnt Spriggan", "Spriggan" }, sw));
 		Anima::SetCreatureOn(sw, "Burnt Spriggan", false);
-		CHECK(Anima::AllSwitchedOff({ "Spriggan", "Burnt Spriggan" }, sw) && !Anima::AllSwitchedOff({}, sw));
+		CHECK(Anima::CasterSwitchedOff({ "Burnt Spriggan", "Spriggan" }, sw) && !Anima::CasterSwitchedOff({}, sw));
 
 		// a row of its own switch (his 575): read off switch=, shown only while that switch is on; a switch name no menu has leaves the row
 		// out (counted), so no light is left on with nothing to turn it off
@@ -793,6 +795,13 @@ namespace
 		CHECK(Near(dying.back().time, 8.0f) && Near(Anima::DeathShare(4.0f, true, false), 0.5f, 0.01f));
 		const auto flat = Anima::FadeKeys(2.0f, Pulse::Kind::kFire, 7u, Anima::kLoopSeconds, false);
 		CHECK(std::ranges::all_of(flat, [](const Anima::Key& a_k) { return Near(a_k.value, 2.0f); }));
+		// a time off the key grid still ends exactly on its target: dark is reached, the ember is reached
+		Anima::gTuning.noticeDownSeconds = 0.23f;
+		Anima::gTuning.deathFadeSeconds = 0.59f;
+		const auto offGrid = Anima::NoticeKeys(1.5f, Pulse::Kind::kNone, 7u, 1.5f, 0.0f);
+		CHECK(Near(offGrid.back().time, 0.23f, 1e-4f) && Near(offGrid.back().value, 0.0f, 1e-5f));
+		const auto offGridDeath = Anima::DeathKeys(1.5f, 0.0f, true);
+		CHECK(Near(offGridDeath.back().time, 0.59f, 1e-4f) && Near(offGridDeath.back().value, 0.0f, 1e-5f));
 		CHECK(Anima::SurgeLift(0.9f) > 1.0f && Near(Anima::SurgeLift(1.2f), 1.0f));
 		// values read off the file set the tuning, a count rounded and never below 0
 		const std::array<float, 12> mine{ 4.0f, 2.0f, 0.0f, 1.0f, 0.5f, 6.0f, 0.1f, 1.0f, 1.5f, 0.75f, 2.0f, 5.0f };

@@ -808,11 +808,13 @@ namespace Anima
 		}
 	}
 
-	// a creature switched off in the menu: every creature name its body's rows carry is off (one still on keeps it lit), and a body no
-	// switch of ours names is never off. Its spells' lights of ours are culled on that one caster as the game makes them (SpellLights.cpp)
-	[[nodiscard]] inline bool AllSwitchedOff(const std::vector<std::string>& a_creatures, const Settings& a_s)
+	// a caster switched off in the menu, for its spells: ONE identity per caster, the creature its body's first switch row names (its own
+	// body's rows come first, RowsFor), so a second row under another name (an eyes row a custom file names apart) never keeps its spells
+	// lit; a body no switch of ours names is never off. Its spells' lights of ours are culled on that one caster as the game makes them
+	// (SpellLights.cpp)
+	[[nodiscard]] inline bool CasterSwitchedOff(const std::vector<std::string>& a_creatures, const Settings& a_s)
 	{
-		return !a_creatures.empty() && std::ranges::none_of(a_creatures, [&](const std::string& a_c) { return CreatureOn(a_s, a_c); });
+		return !a_creatures.empty() && !CreatureOn(a_s, a_creatures.front());
 	}
 
 	// is this row lit at all with these settings (the lights' switch, its kind's switch, the natural-elements switch, its own switch, the
@@ -1044,13 +1046,19 @@ namespace Anima
 		const float      ramp = a_fade * a_to >= a_start ? gTuning.noticeUpSeconds : gTuning.noticeDownSeconds;
 		const auto       count = static_cast<std::size_t>(ramp * kKeysPerSecond) + 1;
 		std::vector<Key> keys;
-		keys.reserve(count);
-		for (std::size_t i = 0; i < count; ++i) {
-			const float t = static_cast<float>(i) / kKeysPerSecond;
-			const float u = std::clamp(t / ramp, 0.0f, 1.0f);
+		keys.reserve(count + 1);
+		const auto at = [&](float a_t) {
+			const float u = ramp > 0.0f ? std::clamp(a_t / ramp, 0.0f, 1.0f) : 1.0f;
 			const float eased = u * u * (3.0f - 2.0f * u);
-			const float target = LoopFade(a_fade * a_to, a_kind, a_seed, (std::min)(kLoopSeconds - ramp + t, kLoopSeconds));
-			keys.push_back({ t, a_start + (target - a_start) * eased });
+			const float target = LoopFade(a_fade * a_to, a_kind, a_seed, (std::min)(kLoopSeconds - ramp + a_t, kLoopSeconds));
+			return Key{ a_t, a_start + (target - a_start) * eased };
+		};
+		for (std::size_t i = 0; i < count; ++i) {
+			keys.push_back(at(static_cast<float>(i) / kKeysPerSecond));
+		}
+		// a ramp off the key grid still ends on its target (the last key holds, so a fade to dark must reach dark)
+		if (keys.back().time < ramp - 1e-4f) {
+			keys.push_back(at(ramp));
 		}
 		return keys;
 	}
@@ -1079,10 +1087,14 @@ namespace Anima
 		}
 		const auto       count = static_cast<std::size_t>(gTuning.deathFadeSeconds * 10.0f) + 1;
 		std::vector<Key> keys;
-		keys.reserve(count);
+		keys.reserve(count + 1);
 		for (std::size_t i = 0; i < count; ++i) {
 			const float t = static_cast<float>(i) / 10.0f;
 			keys.push_back({ t, a_end + (a_from - a_end) * DeathShare(t, true, false) });
+		}
+		// a fade off the key grid still ends on its ember (the last key holds)
+		if (keys.back().time < gTuning.deathFadeSeconds - 1e-4f) {
+			keys.push_back({ gTuning.deathFadeSeconds, a_end });
 		}
 		return keys;
 	}

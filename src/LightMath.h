@@ -275,6 +275,9 @@ namespace LightKit
 		if (!(top > 0.0f)) {
 			return 0.0f;
 		}
+		if (!a_fresh && !std::isfinite(a_ranFor)) {
+			return 1.0f;
+		}
 		const float span = a_t1 - a_t0;
 		float       k = 1.0f;
 		if (a_fresh) {

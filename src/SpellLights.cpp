@@ -96,16 +96,28 @@ namespace Plugin
 		// held back is hung on a later retry) and never culls itself: looked at each frame while the projectile flies, so Illuminated's and
 		// RELight's copies of StreamRows stay untouched
 		// The projectile is held by pointer only until the first look (its Load3D may run on a loader thread, where no handle is made); that
-		// look, on the main thread, takes its handle and every later one resolves it again, so a projectile that has died is never kept
-		void CullRowsLater(RE::NiPointer<RE::TESObjectREFR> a_first, RE::ObjectRefHandle a_handle, int a_looks)
+		// look, on the main thread, takes its handle and every later one resolves it again, so a projectile that has died is never kept.
+		// The looks last as long as the projectile does (a row the cap frees late is still caught), one chain per projectile, and the
+		// projectile's own time alive (the game's livingTime) ends a chain on one that never goes
+		constexpr float kMostCullWatch = 30.0f;
+
+		// the projectiles a chain looks at now; touched only inside the UI tasks (main thread)
+		std::unordered_set<std::uint32_t> gCullWatched;
+
+		void CullRowsLater(RE::NiPointer<RE::TESObjectREFR> a_first, RE::ObjectRefHandle a_handle)
 		{
 			auto* tasks = SKSE::GetTaskInterface();
 			if (!tasks) {
 				return;
 			}
-			tasks->AddUITask([a_first, a_handle, a_looks]() {
+			tasks->AddUITask([a_first, a_handle]() {
 				Guarded("a switched-off creature's beam", [&]() {
 					const auto handle = a_first ? a_first->GetHandle() : a_handle;
+					const auto key = handle.native_handle();
+					// a second Load3D of the same projectile: the chain already looking at it carries on alone
+					if (a_first && !gCullWatched.insert(key).second) {
+						return;
+					}
 					const auto ref = a_first ? a_first : handle.get();
 					auto*      root = ref && !ref->IsDeleted() ? ref->Get3D() : nullptr;
 					if (root) {
@@ -117,9 +129,13 @@ namespace Plugin
 							return RE::BSVisit::BSVisitControl::kContinue;
 						});
 					}
-					// a projectile whose queued load has not stored its body yet is looked at again; the chain ends when it is gone
-					if (ref && !ref->IsDeleted() && handle && a_looks > 1) {
-						CullRowsLater(nullptr, handle, a_looks - 1);
+					// a projectile whose queued load has not stored its body yet, or whose row the cap may free later, is looked at again;
+					// the chain ends when it is gone
+					const auto* proj = ref ? ref->As<RE::Projectile>() : nullptr;
+					if (proj && !ref->IsDeleted() && handle && proj->GetProjectileRuntimeData().livingTime < kMostCullWatch) {
+						CullRowsLater(nullptr, handle);
+					} else {
+						gCullWatched.erase(key);
 					}
 				});
 			});
@@ -149,8 +165,7 @@ namespace Plugin
 			}
 			const auto shooter = a_ref->GetProjectileRuntimeData().shooter.get();
 			if (SwitchedOff(shooter ? shooter->As<RE::Actor>() : nullptr, SettingsNow())) {
-				// about five seconds at 60 frames, longer than any bolt or spray flies
-				CullRowsLater(RE::NiPointer<RE::TESObjectREFR>(a_ref), {}, 300);
+				CullRowsLater(RE::NiPointer<RE::TESObjectREFR>(a_ref), {});
 			}
 		}
 

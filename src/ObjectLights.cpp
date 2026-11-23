@@ -151,12 +151,18 @@ namespace Plugin
 				}
 				return false;
 			});
-			std::ranges::sort(wanted);
+			// only more than the cap needs the nearest first (uncapped with RE::Light, the list is never sorted)
 			if (wanted.size() > Cap()) {
+				std::ranges::nth_element(wanted, wanted.begin() + static_cast<std::ptrdiff_t>(Cap()));
 				wanted.resize(Cap());
 			}
+			std::unordered_set<RE::FormID> chosen;
+			chosen.reserve(wanted.size());
+			for (const auto& w : wanted) {
+				chosen.insert(w.second);
+			}
 			for (auto& [id, object] : gObjects) {
-				const bool lit = std::ranges::any_of(wanted, [id](const auto& a_w) { return a_w.second == id; });
+				const bool lit = chosen.contains(id);
 				auto*      ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(id);
 				if (!lit && object.light) {
 					TakeOff(object, scene);

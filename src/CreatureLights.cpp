@@ -1089,6 +1089,8 @@ namespace Plugin
 				}
 				if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(id)) {
 					Consider(actor, s);
+					// its light came or went here, before the pick's snapshot: the other mods' lights on it are judged again
+					LookAt(id);
 					pick = true;
 				}
 			}
@@ -1435,12 +1437,16 @@ namespace Plugin
 			const REL::Relocation<std::uintptr_t> table{ RE::BSTempEffectParticle::VTABLE[0] };
 			const auto                            update = GameCode(*reinterpret_cast<const std::uintptr_t*>(table.address() + 0x28 * sizeof(std::uintptr_t)), 0x40);
 			const auto*                           b = reinterpret_cast<const std::uint8_t*>(update);
+			// an E8 byte may be an operand, not a call: every candidate is tried, and only one whose target has the copy check's shape is taken
 			for (std::size_t i = 0; update && i + 5 <= 0x40; ++i) {
-				if (b[i] == 0xE8) {
-					std::int32_t rel = 0;
-					std::memcpy(&rel, b + i + 1, sizeof(rel));
-					const auto check = GameCode(update + i + 5 + static_cast<std::intptr_t>(rel), 0x140);
-					return check ? CallBeforeNameClear(check, 0x140) : 0;
+				if (b[i] != 0xE8) {
+					continue;
+				}
+				std::int32_t rel = 0;
+				std::memcpy(&rel, b + i + 1, sizeof(rel));
+				const auto check = GameCode(update + i + 5 + static_cast<std::intptr_t>(rel), 0x140);
+				if (const auto site = check ? CallBeforeNameClear(check, 0x140) : 0) {
+					return site;
 				}
 			}
 			return 0;

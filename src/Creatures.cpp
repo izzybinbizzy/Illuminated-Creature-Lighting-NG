@@ -171,8 +171,9 @@ namespace Plugin
 
 		// the ghost shaders powerofthree's ENB Lights For Effect Shaders lights too, and which rows name one (data load, main thread): ours is
 		// the default there and its switch gives them back (ApplyEnbShaderLights)
-		std::vector<RE::TESEffectShader*> gEnblShaders;
-		std::vector<bool>                 gEnblRows;
+		std::vector<RE::TESEffectShader*>     gEnblShaders;
+		std::vector<std::vector<std::size_t>> gEnblShaderRows;  // beside gEnblShaders: the rows of ours that light each one
+		std::vector<bool>                     gEnblRows;
 
 		// a see-through creature (the game's ghosts, a spirit summon) wears an ability whose constant effect plays a ghost shader: every
 		// such ability is found once, so an actor is matched by the abilities of its own spell list (his 573)
@@ -181,6 +182,7 @@ namespace Plugin
 		{
 			std::unordered_map<const RE::TESEffectShader*, std::vector<std::size_t>> byShader;
 			gEnblShaders.clear();
+			gEnblShaderRows.clear();
 			gEnblRows.assign(gRows.size(), false);
 			// its ini at 1 lights the player and her teammates - spirit summons among them - so ours takes its light off there too; at 0 it
 			// lights only the player, who wears no ghost row of ours
@@ -197,8 +199,12 @@ namespace Plugin
 					}
 					if (enbl && EnbShaderLights::Takes(shader)) {
 						gEnblRows[i] = true;
-						if (std::ranges::find(gEnblShaders, shader) == gEnblShaders.end()) {
+						const auto at = std::ranges::find(gEnblShaders, shader);
+						if (at == gEnblShaders.end()) {
 							gEnblShaders.push_back(shader);
+							gEnblShaderRows.push_back({ i });
+						} else {
+							gEnblShaderRows[static_cast<std::size_t>(at - gEnblShaders.begin())].push_back(i);
 						}
 					}
 					byShader[shader].push_back(i);
@@ -768,11 +774,15 @@ namespace Plugin
 	void ApplyEnbShaderLights(const Anima::Settings& a_s)
 	{
 		std::size_t off = 0, back = 0;
-		for (auto* shader : gEnblShaders) {
-			if (a_s.theirs[Anima::kEnbShaderLights]) {
-				back += EnbShaderLights::GiveBack(shader) ? 1 : 0;
-			} else {
+		for (std::size_t k = 0; k < gEnblShaders.size(); ++k) {
+			auto* shader = gEnblShaders[k];
+			// its light comes off only where a row of ours shows on that shader now (a kind, the ghosts or a creature switched off gives
+			// it back); with its switch on RowShows is false for every such row, so it gets them all back
+			const bool oursShows = k < gEnblShaderRows.size() && std::ranges::any_of(gEnblShaderRows[k], [&](std::size_t a_row) { return RowShows(a_row, a_s); });
+			if (oursShows) {
 				off += EnbShaderLights::TakeOff(shader) ? 1 : 0;
+			} else {
+				back += EnbShaderLights::GiveBack(shader) ? 1 : 0;
 			}
 		}
 		if (off || back) {
@@ -828,18 +838,14 @@ namespace Plugin
 		if (!a_actor || !a_s.creaturesOff || a_s.creaturesOff->empty()) {
 			return false;
 		}
-		// Anima::AllSwitchedOff's test, read straight off the rows (no creature name copied): it runs inside the game's light-making call on
-		// loader and job threads, where only the rows' tables (fixed at data load) and the actor's static race and skin records are read
-		bool named = false;
+		// Anima::CasterSwitchedOff's test, read straight off the rows (no creature name copied): it runs inside the game's light-making call
+		// on loader and job threads, where only the rows' tables (fixed at data load) and the actor's static race and skin records are read
 		for (const auto i : RowsOf(a_actor)) {
 			if (Anima::OnThePicker(gRows[i].kind)) {
-				if (Anima::CreatureOn(a_s, gRows[i].creature)) {
-					return false;
-				}
-				named = true;
+				return !Anima::CreatureOn(a_s, gRows[i].creature);
 			}
 		}
-		return named;
+		return false;
 	}
 
 	bool CouldLight(RE::Actor* a_actor)

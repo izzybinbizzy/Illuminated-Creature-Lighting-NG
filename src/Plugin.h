@@ -51,8 +51,9 @@ namespace Plugin
 	void                          UpdateSettings(const std::function<void(Anima::Settings&)>& a_change);  // under the lock, clamped
 
 	// ------------------------------------------------------------------ Creatures.cpp: the creature files and who lights what
-	void                                         ReadCreatures();  // data load: every creatures file, the races and body models they name, the other mods' claims
-	[[nodiscard]] const std::vector<Anima::Row>& Rows();
+	[[nodiscard]] std::array<int, Anima::kPickCount> PicksRead();      // the menu's patch picks the creatures files were read with at game start
+	void                                             ReadCreatures();  // data load: every creatures file, the races and body models they name, the other mods' claims
+	[[nodiscard]] const std::vector<Anima::Row>&     Rows();
 	// the menu's creature switches: each group (a creatures file) with its creatures' names, sorted; fixed after data load
 	using CreatureGroup = std::pair<std::string, std::vector<std::string>>;
 	[[nodiscard]] const std::vector<CreatureGroup>& CreatureList();

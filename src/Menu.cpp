@@ -244,6 +244,43 @@ namespace Plugin
 				}
 			}
 
+			// one dropdown per patch (Anima::kPicks, in that order), off by default: each changes the game's own creatures, so only a player
+			// with that mod picks it. The creatures files are read at game start, so a pick takes effect then
+			Header(Icon::kBulb, T("Patches for Other Mods"));
+			MenuStyle::Note(T("Pick only the patches for mods you use. A change takes effect the next time the game starts."));
+			{
+				struct PickText
+				{
+					const char*                label;
+					const char*                tip;
+					std::array<const char*, 3> choices;
+				};
+				constexpr std::array<PickText, Anima::kPickCount> kPickText{ {
+					{ TR_MARK("PsBoss - New Flame Atronach"), TR_MARK("Flame atronachs take the yellower orange of PsBoss's version."), { TR_MARK("Off"), TR_MARK("On"), nullptr } },
+					{ TR_MARK("PsBoss - New Dwarven Centurion Female"), TR_MARK("Adds a light for the glowing core on her chest."), { TR_MARK("Off"), TR_MARK("On"), nullptr } },
+					{ TR_MARK("PsBoss - New Spriggan Matron"), TR_MARK("Adds lights for her glowing eyes."), { TR_MARK("Off"), TR_MARK("On"), nullptr } },
+					{ TR_MARK("PsBoss - New Burnt Spriggan Female"), TR_MARK("Adds lights for her glowing eyes."), { TR_MARK("Off"), TR_MARK("On"), nullptr } },
+					{ TR_MARK("PsBoss - New Storm Atronach Female"), TR_MARK("Version 1 is lit right with this off. Pick the version you use."), { TR_MARK("Off or version 1"), TR_MARK("Version 2 (violet)"), TR_MARK("Version 3 (green)") } },
+					{ TR_MARK("PsBoss - New Spriggans"), TR_MARK("Versions 1 and 3 are lit right with this off. Version 2 turns their light orange."), { TR_MARK("Off, version 1 or 3"), TR_MARK("Version 2 (orange)"), nullptr } },
+					{ TR_MARK("PsBoss - New Female Draugr, Remove Eye Glow"), TR_MARK("Female draugr go dark like their eyes when that option is used."), { TR_MARK("Off"), TR_MARK("On"), nullptr } },
+					{ TR_MARK("Dwemer Automatons Glowmapped"), TR_MARK("Dwarven machines take that mod's orange glow."), { TR_MARK("Off"), TR_MARK("On"), nullptr } },
+				} };
+				const auto                                        s = SettingsNow();
+				for (std::size_t i = 0; i < Anima::kPickCount; ++i) {
+					std::array<const char*, 3> items{};
+					for (std::size_t c = 0; c < items.size(); ++c) {
+						items[c] = kPickText[i].choices[c] ? T(kPickText[i].choices[c]) : "";
+					}
+					int v = s.picks[i];
+					SetNextItemWidth(260.0f);
+					if (Combo(T(kPickText[i].label), &v, items.data(), Anima::kPickChoices[i]) && v != s.picks[i]) {
+						UpdateSettings([&](Anima::Settings& a_s) { a_s.picks[i] = std::clamp(v, 0, Anima::kPickChoices[i] - 1); });
+						Changed();
+					}
+					MenuStyle::Tip(T(kPickText[i].tip));
+				}
+			}
+
 			Header(Icon::kBulb, T("Advanced"));
 			Field(T("Flicker after fading up"), &Anima::Settings::noticeFlicker,
 				T("A creature's light flickers after Dark until noticed fades it up; off keeps it steady (on by default)."));

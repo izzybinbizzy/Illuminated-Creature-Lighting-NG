@@ -50,6 +50,12 @@ namespace Plugin
 			for (std::size_t i = 0; i < Anima::kExtraCount; ++i) {
 				j[std::string(Anima::kExtras[i])] = a_s.extras[i];
 			}
+			// the menu's picks as saved now; inspect's picksRead holds the ones the creatures files were read with at game start
+			json picks = json::object();
+			for (std::size_t i = 0; i < Anima::kPickCount; ++i) {
+				picks[std::string(Anima::kPicks[i])] = a_s.picks[i];
+			}
+			j["picks"] = std::move(picks);
 			json off = json::array();
 			if (a_s.creaturesOff) {
 				for (const auto& creature : *a_s.creaturesOff) {
@@ -98,6 +104,16 @@ namespace Plugin
 			return out;
 		}
 
+		json PicksReadJson()
+		{
+			const auto read = PicksRead();
+			json       j = json::object();
+			for (std::size_t i = 0; i < Anima::kPickCount; ++i) {
+				j[std::string(Anima::kPicks[i])] = read[i];
+			}
+			return j;
+		}
+
 		// everything, read on the main thread (the lights are the main thread's)
 		json StateNow()
 		{
@@ -107,7 +123,7 @@ namespace Plugin
 					{ "otherMods", OthersJson() }, { "eyesMod", EyesModLoaded() }, { "blankGlowArt", BlankGlowArt() }, { "lit", LitReport() },
 					{ "loadEvents", { { "litAbilities", LitAbilitiesNoted() }, { "hungAgain", LightsHungAgain() }, { "castLightsOut", CastLightsPutOut() } } }, { "artLit", ArtLitCount() }, { "impactLit", ImpactLitCount() }, { "objectsLit", ObjectLitCount() },
 					{ "impactSeen", { { "particles", ImpactSeen().first }, { "lastRecord", std::format("{:08X}", ImpactSeen().second) }, { "models", ImpactModelsSeen() } } },
-					{ "streams", StreamsJson() }, { "cost", CostJson() } };
+					{ "streams", StreamsJson() }, { "cost", CostJson() }, { "picksRead", PicksReadJson() } };
 			});
 			return now ? *now : DevBenchGlue::NotRunYet();
 		}

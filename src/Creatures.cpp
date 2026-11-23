@@ -110,6 +110,9 @@ namespace Plugin
 			gBlankArt.store(blank > 0, std::memory_order_release);
 		}
 
+		// the patch picks the files were read with (a menu change after that waits for the next start); devbench reads them off its thread
+		std::array<std::atomic<int>, Anima::kPickCount> gPicksRead{};
+
 		void ReadFiles()
 		{
 			std::error_code                    ec;
@@ -122,11 +125,19 @@ namespace Plugin
 				}
 			}
 			std::ranges::sort(files);
+			const auto settings = SettingsNow();
+			for (std::size_t i = 0; i < Anima::kPickCount; ++i) {
+				gPicksRead[i].store(settings.picks[i], std::memory_order_relaxed);
+			}
 			for (const auto& path : files) {
 				std::ifstream in(path);
 				std::size_t   skipped = 0;
 				auto          rows = Anima::ReadCreatures(in, skipped);
-				SKSE::log::info("creatures file {}: {} creature(s){}", Utf8(path.filename()), rows.size(),
+				// a patch the menu did not pick stays out, and a row a picked patch replaces makes way: chosen here, once, at game start
+				const auto read = rows.size();
+				std::erase_if(rows, [&](const Anima::Row& a_row) { return !Anima::PickedIn(a_row, settings); });
+				SKSE::log::info("creatures file {}: {} creature(s){}{}", Utf8(path.filename()), rows.size(),
+					read != rows.size() ? std::format(", {} left to a patch's menu pick", read - rows.size()) : "",
 					skipped ? std::format(", {} block(s) left out (no creature named, or a color that does not read)", skipped) : "");
 				// the menu groups creatures by the file they come from, its name up to " - " ("Skyrim - Eyes and Machines" joins "Skyrim")
 				const auto stem = Utf8(path.stem());
@@ -775,6 +786,15 @@ namespace Plugin
 		for (const auto effect : worn.found) {
 			NoteWornLight(a_actor, effect);
 		}
+	}
+
+	std::array<int, Anima::kPickCount> PicksRead()
+	{
+		std::array<int, Anima::kPickCount> out{};
+		for (std::size_t i = 0; i < Anima::kPickCount; ++i) {
+			out[i] = gPicksRead[i].load(std::memory_order_relaxed);
+		}
+		return out;
 	}
 
 	void ReadCreatures()

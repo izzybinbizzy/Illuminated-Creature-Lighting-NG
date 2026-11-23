@@ -44,6 +44,11 @@ namespace Plugin
 			"noticed {}, flicker after fading up {} ({} key(s) read)",
 			s.on ? "on" : "off", kinds, s.natural ? "on" : "off", s.brightness, s.reach, s.flicker ? "on" : "off", s.deathFade ? "on" : "off",
 			s.surge ? "on" : "off", s.noticed ? "on" : "off", s.noticeFlicker ? "on" : "off", keys);
+		std::string picks;
+		for (std::size_t i = 0; i < Anima::kPickCount; ++i) {
+			picks += std::format("{}{} {}", i ? ", " : "", Anima::kPicks[i], s.picks[i]);
+		}
+		SKSE::log::info("patches picked (0 = off): {}", picks);
 	}
 
 	// the Advanced Settings file (AdvancedSettings.h): the fine values the menu does not show, read once here before any light is made - the

@@ -169,7 +169,17 @@ namespace Anima
 		std::string                group;                    // its menu group: the creatures file it came from (the caller fills it)
 		std::vector<std::string>   blankIf;                  // blankif=: the glow art its light stands for, NormalPath (the draugr eye art)
 		bool                       blank{ false };           // every blankif= model holds no shape (a replacer took the glow out): its own switch
+		std::optional<std::size_t> pick;                     // pick=<key>[:<choice>]: a patch row, read only while the menu picks that choice (kPicks)
+		int                        pickChoice{ 1 };          // the choice of kPicks[pick] it belongs to, 1 and up (0 is the patch off)
+		std::optional<std::size_t> unpick;                   // unpick=<key>: a row that patch replaces, read only while that patch is off
 	};
+
+	// the patches for other mods' creatures, each picked by the player in the menu because its rows would change the game's own creatures
+	// without that mod: a key, and how many choices its dropdown has, Off included. Rows are chosen as the creatures files are read
+	inline constexpr std::array<std::string_view, 8> kPicks{ "PsBossFlameAtronach", "PsBossCenturion", "PsBossSprigganMatron", "PsBossBurntSpriggan",
+		"PsBossStormAtronach", "PsBossSpriggans", "PsBossFemaleDraugr", "DwemerGlowmapped" };
+	inline constexpr std::array<int, kPicks.size()>  kPickChoices{ 2, 2, 2, 2, 3, 2, 2, 2 };
+	inline constexpr std::size_t                     kPickCount = kPicks.size();
 
 	// a model file with no shape, particle or strip in it draws nothing: a replacer that takes a glow out leaves the file that empty.
 	// Every block type a NIF uses is named in its header, so a byte search is enough and needs no model loader
@@ -371,6 +381,29 @@ namespace Anima
 				// a switch no menu has would leave the row lit with nothing to turn it off: the row is left out and counted instead
 				a_row.extra = IndexOf(kExtras, a_value);
 				if (!a_row.extra) {
+					return false;
+				}
+			} else if (key == "pick") {
+				// a patch no menu offers, or a choice past its dropdown, would light a patch row nobody picked: the row is left out and counted
+				const auto colon = a_value.find(':');
+				a_row.pick = IndexOf(kPicks, Trim(a_value.substr(0, colon)));
+				if (!a_row.pick) {
+					return false;
+				}
+				a_row.pickChoice = colon == std::string_view::npos ? 1 : -1;
+				if (colon != std::string_view::npos) {
+					const auto n = Numbers(a_value.substr(colon + 1), 1);
+					if (n && n->size() == 1 && (*n)[0] == std::floor((*n)[0])) {
+						a_row.pickChoice = static_cast<int>(std::clamp((*n)[0], -1.0f, 64.0f));
+					}
+				}
+				if (a_row.pickChoice < 1 || a_row.pickChoice >= kPickChoices[*a_row.pick]) {
+					return false;
+				}
+			} else if (key == "unpick") {
+				// a misspelt patch would leave the row it stands for out for good: left out and counted instead
+				a_row.unpick = IndexOf(kPicks, a_value);
+				if (!a_row.unpick) {
 					return false;
 				}
 			}
@@ -706,6 +739,7 @@ namespace Anima
 		bool                          noGlowUndead{ false };  // rows whose glow art a replacer emptied are lit anyway, off by default
 		std::array<bool, kOthers>     theirs{};               // that mod's creatures keep its own light, ours off on them
 		std::array<bool, kExtraCount> extras{ AllOn<kExtraCount>() };
+		std::array<int, kPickCount>   picks{};  // each patch's choice in the menu, 0 = off (the default)
 		// the creatures switched off one by one in the menu (by their creature name); shared, so copying the settings stays cheap
 		std::shared_ptr<const std::set<std::string, std::less<>>> creaturesOff;
 	};
@@ -791,6 +825,12 @@ namespace Anima
 					return true;
 				}
 			}
+			for (std::size_t i = 0; i < kPickCount; ++i) {
+				if (SameText(a_key, "Pick" + std::string(kPicks[i]))) {
+					a_s.picks[i] = ReadInt(a_value, a_s.picks[i], 0, kPickChoices[i] - 1);
+					return true;
+				}
+			}
 			if (SameText(a_key, "CreatureOff")) {
 				SetCreatureOn(a_s, a_value, false);
 				return !a_value.empty();
@@ -837,6 +877,9 @@ namespace Anima
 		for (std::size_t i = 0; i < kExtraCount; ++i) {
 			a_out << kExtras[i] << '=' << (a_s.extras[i] ? 1 : 0) << '\n';
 		}
+		for (std::size_t i = 0; i < kPickCount; ++i) {
+			a_out << "Pick" << kPicks[i] << '=' << a_s.picks[i] << '\n';
+		}
 		// one line per creature switched off; a creature with no line is on, so an older file reads unchanged
 		if (a_s.creaturesOff) {
 			for (const auto& creature : *a_s.creaturesOff) {
@@ -852,6 +895,16 @@ namespace Anima
 	[[nodiscard]] inline bool CasterSwitchedOff(const std::vector<std::string>& a_creatures, const Settings& a_s)
 	{
 		return !a_creatures.empty() && !CreatureOn(a_s, a_creatures.front());
+	}
+
+	// is this row read at all with the patches picked: a patch row only while its choice is picked, a row a patch replaces only while that
+	// patch is off (judged once, when the creatures files are read)
+	[[nodiscard]] inline bool PickedIn(const Row& a_row, const Settings& a_s) noexcept
+	{
+		if (a_row.pick && (*a_row.pick >= kPickCount || a_s.picks[*a_row.pick] != a_row.pickChoice)) {
+			return false;
+		}
+		return !a_row.unpick || (*a_row.unpick < kPickCount && a_s.picks[*a_row.unpick] == 0);
 	}
 
 	// is this row lit at all with these settings (the lights' switch, its kind's switch, the natural-elements switch, its own switch, the

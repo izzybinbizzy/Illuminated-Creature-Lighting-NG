@@ -18,6 +18,8 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <string>
 
@@ -197,6 +199,69 @@ namespace
 		CHECK(Anima::PulseOf(Anima::Element::kSpirit) == Pulse::Kind::kHealing);
 	}
 
+	// the patches a player picks: a patch row is read only at its own choice, a row it replaces only with it off, a bad pick leaves the row
+	// out; the choices go through the settings file; and the shipped files hold every choice's rows
+	void Picks()
+	{
+		std::istringstream text(
+			"[creature]\nrace=A\npick=PsBossStormAtronach:1\n"
+			"[creature]\nrace=A\npick=PsBossStormAtronach:2\n"
+			"[creature]\nrace=B\npick=DwemerGlowmapped\n"
+			"[creature]\nrace=B\nunpick=DwemerGlowmapped\n"
+			"[creature]\nrace=C\npick=NoSuchPatch\n"
+			"[creature]\nrace=C\npick=PsBossStormAtronach:3\n"
+			"[creature]\nrace=C\npick=PsBossStormAtronach:0\n"
+			"[creature]\nrace=C\npick=PsBossFlameAtronach:2\n"
+			"[creature]\nrace=C\npick=PsBossFlameAtronach:1.5\n"
+			"[creature]\nrace=C\nunpick=Nope\n");
+		std::size_t skipped = 0;
+		const auto  rows = Anima::ReadCreatures(text, skipped);
+		// the choice is the dropdown's place (Off 0): the Storm Atronach's 3 is past its last, as are the 0 and the 1.5
+		CHECK(rows.size() == 4 && skipped == 6);
+		if (rows.size() != 4) {
+			return;
+		}
+		CHECK(rows[0].pick == std::optional<std::size_t>(4) && rows[0].pickChoice == 1 && rows[1].pickChoice == 2);
+		CHECK(rows[2].pick == std::optional<std::size_t>(7) && rows[2].pickChoice == 1 && rows[3].unpick == std::optional<std::size_t>(7));
+		Anima::Settings s;
+		CHECK(!Anima::PickedIn(rows[0], s) && !Anima::PickedIn(rows[1], s) && !Anima::PickedIn(rows[2], s) && Anima::PickedIn(rows[3], s));
+		s.picks[4] = 2;
+		s.picks[7] = 1;
+		CHECK(!Anima::PickedIn(rows[0], s) && Anima::PickedIn(rows[1], s) && Anima::PickedIn(rows[2], s) && !Anima::PickedIn(rows[3], s));
+		std::ostringstream out;
+		Anima::WriteSettings(s, out);
+		std::istringstream in(out.str() + "PickPsBossFlameAtronach=7\n");
+		Anima::Settings    r;
+		Anima::ReadSettings(in, r);
+		CHECK(r.picks[4] == 2 && r.picks[7] == 1 && r.picks[0] == 1);  // a choice past the dropdown stops at its last
+		CHECK(std::ranges::all_of(Anima::Settings{}.picks, [](int a_v) { return a_v == 0; }));
+
+		// the shipped files: every patch row reads, every choice of every patch has rows, and the Dwemer orange replaces the machines'
+		// own four rows one for one
+		std::array<std::array<std::size_t, 3>, Anima::kPickCount> perChoice{};
+		std::size_t                                               unpicked = 0;
+		std::size_t                                               fileSkips = 0;
+		std::error_code                                           ec;
+		for (std::filesystem::directory_iterator it("package/SKSE/Plugins/IlluminatedCreatureLightingNG/Creatures", ec), end; !ec && it != end; it.increment(ec)) {
+			std::ifstream f(it->path());
+			std::size_t   sk = 0;
+			for (const auto& row : Anima::ReadCreatures(f, sk)) {
+				if (row.pick) {
+					++perChoice[*row.pick][static_cast<std::size_t>(row.pickChoice)];
+				}
+				unpicked += row.unpick ? 1 : 0;
+			}
+			fileSkips += sk;
+		}
+		CHECK(!ec && fileSkips == 0);
+		for (std::size_t i = 0; i < Anima::kPickCount; ++i) {
+			for (int c = 1; c < Anima::kPickChoices[i]; ++c) {
+				CHECK(perChoice[i][static_cast<std::size_t>(c)] > 0);
+			}
+		}
+		CHECK(unpicked == 4 && perChoice[7][1] == 4);
+	}
+
 	void SettingsText()
 	{
 		Anima::Settings d;
@@ -234,7 +299,7 @@ namespace
 		std::istringstream in(out.str());
 		Anima::Settings    r;
 		const auto         keys = Anima::ReadSettings(in, r);
-		CHECK(keys == 15 + Anima::kOthers + Anima::kExtraCount);
+		CHECK(keys == 15 + Anima::kOthers + Anima::kExtraCount + Anima::kPickCount);
 		CHECK(!r.on && !r.kinds[2] && r.kinds[1] && r.natural && r.brightness == 150 && r.reach == 75 && !r.flicker && r.deathFade);
 		CHECK(r.theirs[0] && !r.theirs[1] && r.theirs[2] && !r.theirs[3]);
 		CHECK(!r.extras[0]);                                                   // a light of its own switch keeps its off through the file
@@ -854,6 +919,7 @@ int main()
 	Paths();
 	Elements();
 	SettingsText();
+	Picks();
 	Showing();
 	OtherMods();
 	AbilityLights();

@@ -242,7 +242,13 @@ namespace
 		std::size_t                                               unpicked = 0;
 		std::size_t                                               fileSkips = 0;
 		std::error_code                                           ec;
-		for (std::filesystem::directory_iterator it("package/SKSE/Plugins/IlluminatedCreatureLightingNG/Creatures", ec), end; !ec && it != end; it.increment(ec)) {
+		const std::filesystem::path                               folder("package/SKSE/Plugins/IlluminatedCreatureLightingNG/Creatures");
+		// the public repo holds the code, not the creatures files: there the shipped half is passed over and said, never failed
+		if (!std::filesystem::is_directory(folder, ec)) {
+			std::printf("    picks: no creatures folder beside the tests - the shipped files are not read here\n");
+			return;
+		}
+		for (std::filesystem::directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
 			std::ifstream f(it->path());
 			std::size_t   sk = 0;
 			for (const auto& row : Anima::ReadCreatures(f, sk)) {

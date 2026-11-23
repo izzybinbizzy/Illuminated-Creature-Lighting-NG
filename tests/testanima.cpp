@@ -824,6 +824,17 @@ namespace
 			CHECK(!Anima::ClaimsForm(onlyBlack, burst) && Anima::ClaimsForm(onlyBlack, flame));
 			CHECK(Anima::ClaimsForm({ black, plain }, burst) && Anima::ClaimsForm({}, burst));
 			CHECK(Anima::FilterLights(white, flame) && !Anima::FilterLights(white, burst) && !Anima::FilterLights(whiteMissing, flame));
+			// the last creature switched back on leaves no list, so nothing reads as switched off (ApplySpellRecords' flag)
+			{
+				Anima::Settings s;
+				Anima::SetCreatureOn(s, "Spriggan Matron", false);
+				Anima::SetCreatureOn(s, "Dwarven Spider", false);
+				const bool two = s.creaturesOff && s.creaturesOff->size() == 2;
+				Anima::SetCreatureOn(s, "Dwarven Spider", true);
+				const bool one = s.creaturesOff && s.creaturesOff->size() == 1 && !Anima::CreatureOn(s, "Spriggan Matron");
+				Anima::SetCreatureOn(s, "Spriggan Matron", true);
+				CHECK(two && one && !s.creaturesOff && Anima::CreatureOn(s, "Spriggan Matron"));
+			}
 			// the reader's way: a whiteList that resolved to no form filters nothing (Light Placer's IsInvalid), one that did keeps filtering
 			CHECK(!Anima::MakeFilter({}, {}).hasOnly && Anima::FilterLights(Anima::MakeFilter({}, {}), flame) &&
 				  Anima::MakeFilter({ 0x23AA6u }, {}).hasOnly && !Anima::FilterLights(Anima::MakeFilter({ 0x23AA6u }, {}), burst));

@@ -639,7 +639,9 @@ namespace Plugin
 				gOurLights.insert(t.own);
 			}
 		}
-		if (!gTargets.empty()) {
+		// a stream row StreamRows draws adds no record target, yet a switched-off creature's beam row is culled from these hooks too
+		const bool anyStream = std::ranges::any_of(rows, [](const Anima::Row& a_row) { return a_row.stream != Anima::Stream::kNone; });
+		if (!gTargets.empty() || anyStream) {
 			InstallRecordHooks();
 			InstallSwitchSites();
 		}

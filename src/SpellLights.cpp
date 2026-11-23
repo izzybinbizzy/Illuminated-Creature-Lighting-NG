@@ -118,23 +118,29 @@ namespace Plugin
 					if (a_first && !gCullWatched.insert(key).second) {
 						return;
 					}
-					const auto ref = a_first ? a_first : handle.get();
-					// a paused game moves no row and its projectile's livingTime stands still: the chain waits without walking
-					auto* ui = RE::UI::GetSingleton();
-					auto* root = ref && !ref->IsDeleted() && !(ui && ui->GameIsPaused()) ? ref->Get3D() : nullptr;
+					const auto  ref = a_first ? a_first : handle.get();
+					const auto* proj = ref ? ref->As<RE::Projectile>() : nullptr;
+					// the shooter's switch as it is now: switched back on, the row lights this chain culled show again and the chain ends
+					const auto shooter = proj ? proj->GetProjectileRuntimeData().shooter.get() : RE::NiPointer<RE::TESObjectREFR>();
+					const bool off = SwitchedOff(shooter ? shooter->As<RE::Actor>() : nullptr, SettingsNow());
+					// a paused game moves no row and its projectile's livingTime stands still: while off, the chain waits without walking
+					auto*      ui = RE::UI::GetSingleton();
+					const bool paused = ui && ui->GameIsPaused();
+					auto*      root = ref && !ref->IsDeleted() && (!off || !paused) ? ref->Get3D() : nullptr;
 					if (root) {
-						RE::BSVisit::TraverseScenegraphLights(root, [](RE::NiPointLight* a_light) {
-							if (StreamRows::IsRowLight(a_light) && !a_light->GetAppCulled()) {
-								a_light->SetAppCulled(true);
-								++gSwitchCulls[4];
+						RE::BSVisit::TraverseScenegraphLights(root, [off](RE::NiPointLight* a_light) {
+							if (StreamRows::IsRowLight(a_light) && a_light->GetAppCulled() != off) {
+								a_light->SetAppCulled(off);
+								if (off) {
+									++gSwitchCulls[4];
+								}
 							}
 							return RE::BSVisit::BSVisitControl::kContinue;
 						});
 					}
 					// a projectile whose queued load has not stored its body yet, or whose row the cap may free later, is looked at again;
-					// the chain ends when it is gone
-					const auto* proj = ref ? ref->As<RE::Projectile>() : nullptr;
-					if (proj && !ref->IsDeleted() && handle && proj->GetProjectileRuntimeData().livingTime < kMostCullWatch) {
+					// the chain ends when it is gone or its shooter is switched on
+					if (off && proj && !ref->IsDeleted() && handle && proj->GetProjectileRuntimeData().livingTime < kMostCullWatch) {
 						CullRowsLater(nullptr, handle);
 					} else {
 						gCullWatched.erase(key);

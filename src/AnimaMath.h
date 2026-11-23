@@ -7,23 +7,28 @@
 
 #pragma once
 
+#include "AdvancedSettings.h"
 #include "LightMath.h"
 #include "Pulse.h"
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <functional>
 #include <istream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <ostream>
 #include <ranges>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace Anima
@@ -162,7 +167,27 @@ namespace Anima
 		bool                       object{ false };          // object=yes: a placed object its model names (a critter, a jar of bugs), never a character
 		std::string                creature;                 // the creature as a player knows it, for its menu switch (creature=, else the row's name)
 		std::string                group;                    // its menu group: the creatures file it came from (the caller fills it)
+		std::vector<std::string>   blankIf;                  // blankif=: the glow art its light stands for, NormalPath (the draugr eye art)
+		bool                       blank{ false };           // every blankif= model holds no shape (a replacer took the glow out): its own switch
+		std::optional<std::size_t> pick;                     // pick=<key>[:<choice>]: a patch row, read only while the menu picks that choice (kPicks)
+		int                        pickChoice{ 1 };          // the choice of kPicks[pick] it belongs to, 1 and up (0 is the patch off)
+		std::optional<std::size_t> unpick;                   // unpick=<key>: a row that patch replaces, read only while that patch is off
 	};
+
+	// the patches for other mods' creatures, each picked by the player in the menu because its rows would change the game's own creatures
+	// without that mod: a key, and how many choices its dropdown has, Off included. Rows are chosen as the creatures files are read
+	inline constexpr std::array<std::string_view, 8> kPicks{ "PsBossFlameAtronach", "PsBossCenturion", "PsBossSprigganMatron", "PsBossBurntSpriggan",
+		"PsBossStormAtronach", "PsBossSpriggans", "PsBossFemaleDraugr", "DwemerGlowmapped" };
+	inline constexpr std::array<int, kPicks.size()>  kPickChoices{ 2, 2, 2, 2, 3, 2, 2, 2 };
+	inline constexpr std::size_t                     kPickCount = kPicks.size();
+
+	// a model file with no shape, particle or strip in it draws nothing: a replacer that takes a glow out leaves the file that empty.
+	// Every block type a NIF uses is named in its header, so a byte search is enough and needs no model loader
+	[[nodiscard]] inline bool DrawsSomething(std::string_view a_nif)
+	{
+		return std::ranges::any_of(std::array<std::string_view, 3>{ "TriShape", "TriStrips", "ParticleSystem" },
+			[&](std::string_view a_type) { return a_nif.find(a_type) != std::string_view::npos; });
+	}
 
 	// Illuminated and RELight light everything a third brighter on Vanilla (their VanillaBrightness, 1.35 as made). The spell, burst and
 	// stream rows took their numbers (the steam, ours alone, takes the same so the spells stay alike) and a moved row was theirs, so on
@@ -342,6 +367,8 @@ namespace Anima
 				a_row.object = true;
 			} else if (key == "art") {
 				a_row.arts.push_back(NormalPath(a_value));
+			} else if (key == "blankif") {
+				a_row.blankIf.push_back(NormalPath(a_value));
 			} else if (key == "impact") {
 				a_row.impacts.push_back(NormalPath(a_value));
 			} else if (key == "size") {
@@ -354,6 +381,29 @@ namespace Anima
 				// a switch no menu has would leave the row lit with nothing to turn it off: the row is left out and counted instead
 				a_row.extra = IndexOf(kExtras, a_value);
 				if (!a_row.extra) {
+					return false;
+				}
+			} else if (key == "pick") {
+				// a patch no menu offers, or a choice past its dropdown, would light a patch row nobody picked: the row is left out and counted
+				const auto colon = a_value.find(':');
+				a_row.pick = IndexOf(kPicks, Trim(a_value.substr(0, colon)));
+				if (!a_row.pick) {
+					return false;
+				}
+				a_row.pickChoice = colon == std::string_view::npos ? 1 : -1;
+				if (colon != std::string_view::npos) {
+					const auto n = Numbers(a_value.substr(colon + 1), 1);
+					if (n && n->size() == 1 && (*n)[0] == std::floor((*n)[0])) {
+						a_row.pickChoice = static_cast<int>(std::clamp((*n)[0], -1.0f, 64.0f));
+					}
+				}
+				if (a_row.pickChoice < 1 || a_row.pickChoice >= kPickChoices[*a_row.pick]) {
+					return false;
+				}
+			} else if (key == "unpick") {
+				// a misspelt patch would leave the row it stands for out for good: left out and counted instead
+				a_row.unpick = IndexOf(kPicks, a_value);
+				if (!a_row.unpick) {
 					return false;
 				}
 			}
@@ -452,18 +502,56 @@ namespace Anima
 	};
 	// the last entry takes every other mod that lights one of our creatures (Magic Creatures of Radiance and any mod not named here):
 	// a mod we do not know has a switch too, and the menu names its Light Placer folder or its plugin file
-	inline constexpr std::array<OtherMod, 7> kOtherMods{ {
+	inline constexpr std::array<OtherMod, 8> kOtherMods{ {
 		{ "TheirsEmissive", "Emissive series (iamzachhunter)", "", "", "" },
 		{ "TheirsElementals", "iLluminous Elementals", "illuminouselementals", "", "" },
 		{ "TheirsDarenii", "Darenii's Spells - Creatures - CS Lights Addon", "dareniis creatures", "", "" },
 		{ "TheirsLuminous", "Luminous Atronachs (Raxyx7)", "", "", "luminousatronachs" },
 		{ "TheirsEnhanced", "Enhanced Atronachs (Raxyx7)", "", "", "enhancedatronachs" },
 		{ "TheirsIlluminatedAtronachs", "Illuminated Atronachs (Nehluxhes and Le_Magicien)", "", "", "lm_astronach" },
+		{ "TheirsEnbShaderLights", "ENB Lights For Effect Shaders (powerofthree)", "", "", "" },
 		{ "TheirsOther", "Other mods", "", "", "" },
 	} };
 	inline constexpr std::size_t             kOthers = kOtherMods.size();
 	inline constexpr std::size_t             kOtherUnnamed = kOthers - 1;
 	using Lighters = std::array<bool, kOthers>;
+
+	// one light of another mod's Light Placer entry, as Light Placer filters it (ConfigData.cpp IsInvalid): never the forms its blackList
+	// names, and only the forms its whiteList names when that list resolved to any (an empty or all-missing whiteList filters nothing)
+	struct LightFilter
+	{
+		bool                       hasOnly{ false };
+		std::vector<std::uint32_t> only;
+		std::vector<std::uint32_t> never;
+	};
+
+	// a light's filter from the forms its two lists resolved to: a whiteList counts only when it resolved to any form
+	[[nodiscard]] inline LightFilter MakeFilter(std::vector<std::uint32_t> a_only, std::vector<std::uint32_t> a_never)
+	{
+		LightFilter f;
+		f.hasOnly = !a_only.empty();
+		f.only = std::move(a_only);
+		f.never = std::move(a_never);
+		return f;
+	}
+
+	// does this light reach a reference whose filter ids (its cell, itself, its base, worldspace, location and parent locations) are a_ids
+	[[nodiscard]] inline bool FilterLights(const LightFilter& a_light, const std::vector<std::uint32_t>& a_ids)
+	{
+		const auto named = [&](const std::vector<std::uint32_t>& a_list) {
+			return std::ranges::any_of(a_ids, [&](std::uint32_t a_id) { return a_id != 0 && std::ranges::find(a_list, a_id) != a_list.end(); });
+		};
+		if (a_light.hasOnly && !named(a_light.only)) {
+			return false;
+		}
+		return !named(a_light.never);
+	}
+
+	// a model one mod's file names claims a reference only when one of its lights there reaches it; no light read claims every reference
+	[[nodiscard]] inline bool ClaimsForm(const std::vector<LightFilter>& a_lights, const std::vector<std::uint32_t>& a_ids)
+	{
+		return a_lights.empty() || std::ranges::any_of(a_lights, [&](const LightFilter& a_light) { return FilterLights(a_light, a_ids); });
+	}
 
 	// A mod whose Light Placer folders have plain names ("Atronachs", "Draugr") is known by the exact pair of folder and file name,
 	// so another mod's folder of the same name is not taken for it. The Emissive series: one folder per creature download, its files
@@ -476,6 +564,9 @@ namespace Anima
 	};
 	inline constexpr std::size_t kEmissive = 0;
 	static_assert(kOtherMods[kEmissive].key == "TheirsEmissive");
+	// powerofthree's ENB Lights For Effect Shaders: it lights the ghosts' own shaders (EnbShaderLights.h), not a Light Placer file
+	inline constexpr std::size_t kEnbShaderLights = kOthers - 2;
+	static_assert(kOtherMods[kEnbShaderLights].key == "TheirsEnbShaderLights");
 	inline constexpr std::array<OtherFile, 30> kOtherFiles{ {
 		{ kEmissive, "ash spawns", "ash spawns" },
 		{ kEmissive, "atronachs", "flame atronach" },
@@ -643,9 +734,12 @@ namespace Anima
 		bool                          flicker{ true };
 		bool                          deathFade{ true };
 		bool                          surge{ true };
-		bool                          noticed{ false };  // a creature's lights wait until it notices the player (his ask), off by default
-		std::array<bool, kOthers>     theirs{};          // that mod's creatures keep its own light, ours off on them
+		bool                          noticed{ false };       // a creature's lights wait until it notices the player (his ask), off by default
+		bool                          noticeFlicker{ true };  // with dark until noticed, a light flickers once it has faded up (his ask), on by default
+		bool                          noGlowUndead{ false };  // rows whose glow art a replacer emptied are lit anyway, off by default
+		std::array<bool, kOthers>     theirs{};               // that mod's creatures keep its own light, ours off on them
 		std::array<bool, kExtraCount> extras{ AllOn<kExtraCount>() };
+		std::array<int, kPickCount>   picks{};  // each patch's choice in the menu, 0 = off (the default)
 		// the creatures switched off one by one in the menu (by their creature name); shared, so copying the settings stays cheap
 		std::shared_ptr<const std::set<std::string, std::less<>>> creaturesOff;
 	};
@@ -696,8 +790,9 @@ namespace Anima
 		// one known key onto the settings; false for a key this version does not know
 		inline bool ApplySetting(Settings& a_s, std::string_view a_key, std::string_view a_value)
 		{
-			const std::array<std::pair<std::string_view, bool*>, 6> switches{ { { "Lights", &a_s.on }, { "NaturalElements", &a_s.natural },
-				{ "Flicker", &a_s.flicker }, { "DeathFade", &a_s.deathFade }, { "CastSurge", &a_s.surge }, { "DarkUntilNoticed", &a_s.noticed } } };
+			const std::array<std::pair<std::string_view, bool*>, 8> switches{ { { "Lights", &a_s.on }, { "NaturalElements", &a_s.natural },
+				{ "Flicker", &a_s.flicker }, { "DeathFade", &a_s.deathFade }, { "CastSurge", &a_s.surge }, { "DarkUntilNoticed", &a_s.noticed },
+				{ "NoticeFlicker", &a_s.noticeFlicker }, { "NoGlowUndead", &a_s.noGlowUndead } } };
 			for (const auto& [name, field] : switches) {
 				if (SameText(a_key, name)) {
 					*field = ReadBool(a_value, *field);
@@ -727,6 +822,12 @@ namespace Anima
 			for (std::size_t i = 0; i < kExtraCount; ++i) {
 				if (SameText(a_key, kExtras[i])) {
 					a_s.extras[i] = ReadBool(a_value, a_s.extras[i]);
+					return true;
+				}
+			}
+			for (std::size_t i = 0; i < kPickCount; ++i) {
+				if (SameText(a_key, "Pick" + std::string(kPicks[i]))) {
+					a_s.picks[i] = ReadInt(a_value, a_s.picks[i], 0, kPickChoices[i] - 1);
 					return true;
 				}
 			}
@@ -768,11 +869,16 @@ namespace Anima
 		a_out << "DeathFade=" << (a_s.deathFade ? 1 : 0) << '\n';
 		a_out << "CastSurge=" << (a_s.surge ? 1 : 0) << '\n';
 		a_out << "DarkUntilNoticed=" << (a_s.noticed ? 1 : 0) << '\n';
+		a_out << "NoticeFlicker=" << (a_s.noticeFlicker ? 1 : 0) << '\n';
+		a_out << "NoGlowUndead=" << (a_s.noGlowUndead ? 1 : 0) << '\n';
 		for (std::size_t i = 0; i < kOthers; ++i) {
 			a_out << kOtherMods[i].key << '=' << (a_s.theirs[i] ? 1 : 0) << '\n';
 		}
 		for (std::size_t i = 0; i < kExtraCount; ++i) {
 			a_out << kExtras[i] << '=' << (a_s.extras[i] ? 1 : 0) << '\n';
+		}
+		for (std::size_t i = 0; i < kPickCount; ++i) {
+			a_out << "Pick" << kPicks[i] << '=' << a_s.picks[i] << '\n';
 		}
 		// one line per creature switched off; a creature with no line is on, so an older file reads unchanged
 		if (a_s.creaturesOff) {
@@ -782,12 +888,31 @@ namespace Anima
 		}
 	}
 
-	// is this row lit at all with these settings (the lights' switch, its kind's switch, the natural-elements switch, its own switch, and
-	// for a creature's own light, that creature's switch)
+	// a caster switched off in the menu, for its spells: ONE identity per caster, the creature its body's first switch row names (its own
+	// body's rows come first, RowsFor), so a second row under another name (an eyes row a custom file names apart) never keeps its spells
+	// lit; a body no switch of ours names is never off. Its spells' lights of ours are culled on that one caster as the game makes them
+	// (SpellLights.cpp)
+	[[nodiscard]] inline bool CasterSwitchedOff(const std::vector<std::string>& a_creatures, const Settings& a_s)
+	{
+		return !a_creatures.empty() && !CreatureOn(a_s, a_creatures.front());
+	}
+
+	// is this row read at all with the patches picked: a patch row only while its choice is picked, a row a patch replaces only while that
+	// patch is off (judged once, when the creatures files are read)
+	[[nodiscard]] inline bool PickedIn(const Row& a_row, const Settings& a_s) noexcept
+	{
+		if (a_row.pick && (*a_row.pick >= kPickCount || a_s.picks[*a_row.pick] != a_row.pickChoice)) {
+			return false;
+		}
+		return !a_row.unpick || (*a_row.unpick < kPickCount && a_s.picks[*a_row.unpick] == 0);
+	}
+
+	// is this row lit at all with these settings (the lights' switch, its kind's switch, the natural-elements switch, its own switch, the
+	// switch for glow art a replacer emptied, and for a creature's own light, that creature's switch)
 	[[nodiscard]] inline bool Shown(const Row& a_row, const Settings& a_s)
 	{
 		return a_s.on && a_s.kinds[static_cast<std::size_t>(a_row.kind)] && (a_s.natural || !Natural(a_row.element)) &&
-		       (!a_row.extra || (*a_row.extra < kExtraCount && a_s.extras[*a_row.extra])) &&
+		       (!a_row.extra || (*a_row.extra < kExtraCount && a_s.extras[*a_row.extra])) && (!a_row.blank || a_s.noGlowUndead) &&
 		       (!OnThePicker(a_row.kind) || CreatureOn(a_s, a_row.creature));
 	}
 
@@ -808,11 +933,69 @@ namespace Anima
 		return a_oursShows && !a_theirSwitch;
 	}
 
-	// ------------------------------------------------------------------ the light over time
-	inline constexpr float kDeathFadeSeconds = 4.0f;
-	inline constexpr float kEmberShare = 0.25f;  // what stays on an ember creature's remains: a quarter of its strength
-	inline constexpr float kSurgeSeconds = 0.6f;
-	inline constexpr float kSurgeLift = 0.6f;  // +60 % at the surge's top, easing back down
+	// ------------------------------------------------------------------ the light over time: the defaults of the Advanced Settings file
+	inline constexpr float       kDeathFadeSeconds = 4.0f;
+	inline constexpr float       kEmberShare = 0.25f;  // what stays on an ember creature's remains: a quarter of its strength
+	inline constexpr float       kSurgeSeconds = 0.6f;
+	inline constexpr float       kSurgeLift = 0.6f;          // +60 % at the surge's top, easing back down
+	inline constexpr float       kSearchShare = 0.5f;        // dark until noticed: the share a fight that searches gives
+	inline constexpr float       kNoticeUpSeconds = 1.5f;    // the rise as it notices the player
+	inline constexpr float       kNoticeDownSeconds = 3.0f;  // the fall as it calms down
+	inline constexpr std::size_t kLitShaders = 16;           // lit creatures on Community Shaders (Light Limit Fix), as RELight's glow cap
+	inline constexpr std::size_t kLitPlain = 5;              // and on ENB / Vanilla, where a few lights already fill a room's budget
+	inline constexpr std::size_t kObjectsShaders = 8;        // lit objects (torchbugs, jars) on Community Shaders
+	inline constexpr std::size_t kObjectsPlain = 2;          // and on ENB / Vanilla
+
+	// the Advanced Settings file's values (AdvancedSettings.h), read once when the game starts (Settings.cpp LoadAdvanced) before any
+	// light is made, and only read after
+	struct Tuning
+	{
+		std::size_t litShaders{ kLitShaders };
+		std::size_t litPlain{ kLitPlain };
+		std::size_t objectsShaders{ kObjectsShaders };
+		std::size_t objectsPlain{ kObjectsPlain };
+		float       flickerSwing{ 1.0f };
+		float       deathFadeSeconds{ kDeathFadeSeconds };
+		float       emberShare{ kEmberShare };
+		float       surgeSeconds{ kSurgeSeconds };
+		float       surgeLift{ kSurgeLift };
+		float       searchShare{ kSearchShare };
+		float       noticeUpSeconds{ kNoticeUpSeconds };
+		float       noticeDownSeconds{ kNoticeDownSeconds };
+	};
+	inline Tuning gTuning{};
+
+	// "<title> - Advanced Settings.ini" (shipped) and "... - Custom.ini" (the player's) in the mod's SKSE folder
+	inline constexpr std::string_view kAdvancedTitle = "Illuminated - Creature Lighting NG";
+
+	// in Tuning's order; ranges a player can use safely (an ease under 10 s stays inside the flicker's 12 s loop, NoticeKeys)
+	inline constexpr std::array<AdvancedSettings::Knob, 12> kAdvancedKnobs{ {
+		{ "Performance", "LitCreatures", "How many creatures nearest you are lit at once on Community Shaders.", 16.0f, 1.0f, 32.0f, true, true },
+		{ "Performance", "LitCreaturesENBVanilla", "How many creatures nearest you are lit at once on ENB and Vanilla.", 5.0f, 1.0f, 16.0f, true, false },
+		{ "Performance", "LitObjects", "How many torchbugs, jars of bugs and other glowing objects are lit at once on Community Shaders (no limit with RE::Light).", 8.0f, 0.0f,
+			16.0f, true, false },
+		{ "Performance", "LitObjectsENBVanilla", "How many glowing objects are lit at once on ENB and Vanilla (no limit with RE::Light).", 2.0f, 0.0f, 8.0f, true, false },
+		{ "Flicker", "FlickerSwing", "How much a creature's flicker swings: 1 as made, 0.5 half as much, 0 steady.", 1.0f, 0.0f, 2.0f, false, true },
+		{ "Fade on death", "FadeSeconds", "How many seconds a dying creature's light takes to fade.", 4.0f, 0.5f, 20.0f, false, false },
+		{ "Fade on death", "EmberShare", "How much light a flame creature's remains keep, as a share of its glow.", 0.25f, 0.0f, 1.0f, false, false },
+		{ "Glow when casting", "SurgeSeconds", "How many seconds the glow when casting lasts.", 0.6f, 0.3f, 3.0f, false, false },
+		{ "Glow when casting", "SurgeLift", "How much brighter a creature glows at the peak of a cast: 0.6 is 60 percent brighter.", 0.6f, 0.0f, 2.0f,
+			false, false },
+		{ "Dark until noticed", "SearchingShare", "How bright a creature glows while it searches for you, as a share of its full glow.", 0.5f,
+			0.0f, 1.0f, false, false },
+		{ "Dark until noticed", "FadeUpSeconds", "How many seconds a creature's light takes to fade up when it notices you.", 1.5f, 0.2f, 10.0f,
+			false, true },
+		{ "Dark until noticed", "FadeDownSeconds", "How many seconds a creature's light takes to fade down when it calms.", 3.0f, 0.2f, 10.0f,
+			false, false },
+	} };
+
+	// the file's values (one per knob, in its order) as the tuning they set
+	[[nodiscard]] inline Tuning TuningOf(std::span<const float> a_values) noexcept
+	{
+		const auto at = [&](std::size_t a_i) { return a_i < a_values.size() ? a_values[a_i] : kAdvancedKnobs[a_i].def; };
+		const auto count = [&](std::size_t a_i) { return static_cast<std::size_t>(std::lround((std::max)(at(a_i), 0.0f))); };
+		return { count(0), count(1), count(2), count(3), at(4), at(5), at(6), at(7), at(8), at(9), at(10), at(11) };
+	}
 
 	// who gets a light within the cap: the living before the dead, a creature's glow before a pair of eyes (a crypt of draugr must not put
 	// an atronach out), then the nearest
@@ -847,27 +1030,27 @@ namespace Anima
 	}
 
 	// the share of its strength a light shows a_seconds after its creature died: 1 -> 0 over the fade (or at once without it),
-	// an ember creature keeps kEmberShare
+	// an ember creature keeps its share (the Advanced Settings file)
 	[[nodiscard]] inline float DeathShare(float a_seconds, bool a_fade, bool a_ember) noexcept
 	{
-		const float floor = a_ember ? kEmberShare : 0.0f;
-		if (!a_fade || a_seconds >= kDeathFadeSeconds) {
+		const float floor = a_ember ? gTuning.emberShare : 0.0f;
+		if (!a_fade || a_seconds >= gTuning.deathFadeSeconds) {
 			return floor;
 		}
-		const float t = std::clamp(a_seconds / kDeathFadeSeconds, 0.0f, 1.0f);
+		const float t = std::clamp(a_seconds / gTuning.deathFadeSeconds, 0.0f, 1.0f);
 		const float eased = 1.0f - t * t * (3.0f - 2.0f * t);  // smoothstep: no visible snap at either end
 		return floor + (1.0f - floor) * eased;
 	}
 
-	// the lift a cast gives a_seconds after it began: up fast, back down over kSurgeSeconds; 1 outside it
+	// the lift a cast gives a_seconds after it began: up fast, back down over the surge's seconds; 1 outside it
 	[[nodiscard]] inline float SurgeLift(float a_seconds) noexcept
 	{
-		if (a_seconds < 0.0f || a_seconds >= kSurgeSeconds) {
+		if (a_seconds < 0.0f || a_seconds >= gTuning.surgeSeconds) {
 			return 1.0f;
 		}
-		const float t = a_seconds / kSurgeSeconds;
+		const float t = a_seconds / gTuning.surgeSeconds;
 		const float up = t < 0.15f ? t / 0.15f : 1.0f - (t - 0.15f) / 0.85f;
-		return 1.0f + kSurgeLift * std::clamp(up, 0.0f, 1.0f);
+		return 1.0f + gTuning.surgeLift * std::clamp(up, 0.0f, 1.0f);
 	}
 
 	// ------------------------------------------------------------------ the keys the game plays (CreatureLights.cpp: a light's dimmer)
@@ -885,12 +1068,12 @@ namespace Anima
 	[[nodiscard]] inline std::vector<Key> FadeKeys(float a_fade, Pulse::Kind a_kind, std::uint32_t a_seed, float a_seconds, bool a_surge)
 	{
 		const auto       count = static_cast<std::size_t>(a_seconds * kKeysPerSecond) + 1;
-		const float      first = a_fade * Pulse::Factor(a_kind, 0.0, a_seed);
+		const float      first = a_fade * Pulse::Factor(a_kind, 0.0, a_seed, gTuning.flickerSwing);
 		std::vector<Key> keys;
 		keys.reserve(count);
 		for (std::size_t i = 0; i < count; ++i) {
 			const float t = static_cast<float>(i) / kKeysPerSecond;
-			float       v = a_fade * Pulse::Factor(a_kind, static_cast<double>(t), a_seed);
+			float       v = a_fade * Pulse::Factor(a_kind, static_cast<double>(t), a_seed, gTuning.flickerSwing);
 			if (a_surge) {
 				v *= SurgeLift(t);
 			}
@@ -903,22 +1086,39 @@ namespace Anima
 		return keys;
 	}
 
+	// the endless flicker's fade a_t seconds into its loop: the value FadeKeys gives the loop (no surge), its last stretch easing to its first
+	[[nodiscard]] inline float LoopFade(float a_fade, Pulse::Kind a_kind, std::uint32_t a_seed, float a_t)
+	{
+		const float first = a_fade * Pulse::Factor(a_kind, 0.0, a_seed, gTuning.flickerSwing);
+		float       v = a_fade * Pulse::Factor(a_kind, static_cast<double>(a_t), a_seed, gTuning.flickerSwing);
+		const float seam = (a_t - (kLoopSeconds - kSeamSeconds)) / kSeamSeconds;
+		if (seam > 0.0f) {
+			v += (first - v) * (std::min)(seam, 1.0f);
+		}
+		return v;
+	}
+
+	// does a creature's light flicker: the flicker switch, and with dark until noticed only while its own switch keeps the flicker after
+	// the fade-up (off: the light holds steady)
+	[[nodiscard]] inline bool Flickers(const Settings& a_s) noexcept
+	{
+		return a_s.flicker && (!a_s.noticed || a_s.noticeFlicker);
+	}
+
 	// dark until noticed: a creature's lights follow how far its fight has gone, by the game's combat state (TESCombatEvent: 0 none, 1 in
 	// combat, 2 searching) - dark while calm, part way while it searches, full in combat
-	inline constexpr float kSearchShare = 0.5f;
-	inline constexpr float kNoticeUpSeconds = 1.5f;    // the rise as it notices the player
-	inline constexpr float kNoticeDownSeconds = 3.0f;  // the fall as it calms down
-
-	[[nodiscard]] constexpr float NoticeShare(int a_state) noexcept
+	[[nodiscard]] inline float NoticeShare(int a_state) noexcept
 	{
-		return a_state == 1 ? 1.0f : a_state == 2 ? kSearchShare :
+		return a_state == 1 ? 1.0f : a_state == 2 ? gTuning.searchShare :
 		                                            0.0f;
 	}
 
-	// the combat state a creature's lights start at: the last one the game announced for it, else in a fight or not
-	[[nodiscard]] constexpr int StartState(std::optional<int> a_announced, bool a_inCombat) noexcept
+	// the combat state a creature's lights start at, the game's own three states (Actor::GetCombatState, 1.6.1170 id 38556): 0 out of
+	// combat, 2 in combat while its combat group searches, else 1
+	[[nodiscard]] constexpr int StartState(bool a_inCombat, bool a_searching) noexcept
 	{
-		return a_announced ? *a_announced : (a_inCombat ? 1 : 0);
+		return !a_inCombat ? 0 : a_searching ? 2 :
+		                                       1;
 	}
 
 	// the fade an ease starts from: what the light shows now (flicker and a surge above full included), so a change part way through an
@@ -929,23 +1129,44 @@ namespace Anima
 	}
 
 	// a light's fade from a_start (the fade it shows) to a_to (a share of its full fade a_fade), eased over the rise or the fall: the first key
-	// is a_start itself and the flicker fades in with the ease; with a flicker its keys go on at the new share for kCastSeconds. Played
-	// once: the last key holds, so the ramp never comes round again
+	// is a_start itself and the flicker fades in with the ease. Played once, so the last key holds; a flickering light is then handed to its
+	// endless flicker at the new share (HandsOver), and the ease's flicker is that loop's own last stretch, so it ends on the loop's first key
 	[[nodiscard]] inline std::vector<Key> NoticeKeys(float a_fade, Pulse::Kind a_kind, std::uint32_t a_seed, float a_start, float a_to)
 	{
-		const float      ramp = a_fade * a_to >= a_start ? kNoticeUpSeconds : kNoticeDownSeconds;
-		const float      seconds = a_kind == Pulse::Kind::kNone || a_to <= 0.0f ? ramp : ramp + kCastSeconds;
-		const auto       count = static_cast<std::size_t>(seconds * kKeysPerSecond) + 1;
+		const float      ramp = a_fade * a_to >= a_start ? gTuning.noticeUpSeconds : gTuning.noticeDownSeconds;
+		const auto       count = static_cast<std::size_t>(ramp * kKeysPerSecond) + 1;
 		std::vector<Key> keys;
-		keys.reserve(count);
-		for (std::size_t i = 0; i < count; ++i) {
-			const float t = static_cast<float>(i) / kKeysPerSecond;
-			const float u = std::clamp(t / ramp, 0.0f, 1.0f);
+		keys.reserve(count + 1);
+		const auto at = [&](float a_t) {
+			const float u = ramp > 0.0f ? std::clamp(a_t / ramp, 0.0f, 1.0f) : 1.0f;
 			const float eased = u * u * (3.0f - 2.0f * u);
-			const float target = a_fade * a_to * Pulse::Factor(a_kind, static_cast<double>(t), a_seed);
-			keys.push_back({ t, a_start + (target - a_start) * eased });
+			const float target = LoopFade(a_fade * a_to, a_kind, a_seed, (std::min)(kLoopSeconds - ramp + a_t, kLoopSeconds));
+			return Key{ a_t, a_start + (target - a_start) * eased };
+		};
+		for (std::size_t i = 0; i < count; ++i) {
+			keys.push_back(at(static_cast<float>(i) / kKeysPerSecond));
+		}
+		// a ramp off the key grid still ends on its target (the last key holds, so a fade to dark must reach dark)
+		if (keys.back().time < ramp - 1e-4f) {
+			keys.push_back(at(ramp));
 		}
 		return keys;
+	}
+
+	// an ease that ends on a flickering light goes on to its endless flicker at the share it reached (CreatureLights.cpp); dark or steady holds
+	[[nodiscard]] constexpr bool HandsOver(Pulse::Kind a_kind, float a_to) noexcept
+	{
+		return a_kind != Pulse::Kind::kNone && a_to > 0.0f;
+	}
+
+	// a dimmer's clamped keys have played to their end: the time it has run (NiTimeController +0x2C, summed in ComputeScaledTime 70824) reached
+	// its last key. Start (70817) marks a fresh run with a last time of -FLT_MAX and sums from 0 only at its next update, so until then the
+	// time it shows is the old run's
+	inline constexpr float kNotRunYet = -std::numeric_limits<float>::max();
+
+	[[nodiscard]] constexpr bool KeysRunOut(float a_lastTime, float a_ranFor, float a_end) noexcept
+	{
+		return a_lastTime != kNotRunYet && a_ranFor >= a_end;
 	}
 
 	// a dying light's fade: from what it shows now down to a_end (its ember's fade, or 0) over the death fade, or there at once without it
@@ -954,12 +1175,16 @@ namespace Anima
 		if (!a_fade) {
 			return { { 0.0f, a_end }, { 0.05f, a_end } };
 		}
-		const auto       count = static_cast<std::size_t>(kDeathFadeSeconds * 10.0f) + 1;
+		const auto       count = static_cast<std::size_t>(gTuning.deathFadeSeconds * 10.0f) + 1;
 		std::vector<Key> keys;
-		keys.reserve(count);
+		keys.reserve(count + 1);
 		for (std::size_t i = 0; i < count; ++i) {
 			const float t = static_cast<float>(i) / 10.0f;
 			keys.push_back({ t, a_end + (a_from - a_end) * DeathShare(t, true, false) });
+		}
+		// a fade off the key grid still ends on its ember (the last key holds)
+		if (keys.back().time < gTuning.deathFadeSeconds - 1e-4f) {
+			keys.push_back({ gTuning.deathFadeSeconds, a_end });
 		}
 		return keys;
 	}

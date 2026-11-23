@@ -9,6 +9,7 @@
 // lives.
 
 #include "Plugin.h"
+#include "Po3Tweaks.h"
 #include "StreamRows.h"
 
 namespace Plugin
@@ -113,15 +114,17 @@ namespace Plugin
 				.cloud = row.stream == Anima::Stream::kCloud };
 			for (const auto& key : row.records) {
 				auto* form = FormOfKey(key);
-				if (const auto* proj = form ? form->As<RE::BGSProjectile>() : nullptr) {
+				if (const auto* proj = form ? form->As<RE::BGSProjectile>() : nullptr; proj && !RowDrawn(proj)) {
+					SKSE::log::info("stream rows: {} names {} - neither a beam, a flame nor a cone in this load order, so it is lit on its record", row.name, key);
+				} else if (proj) {
 					rows.insert_or_assign(proj->GetFormID(), recipe);
 					if (natural) {
 						gNaturalBases.insert(proj->GetFormID());
 					} else {
 						gNaturalBases.erase(proj->GetFormID());
 					}
-				} else if (form || key.find('~') != std::string::npos) {
-					SKSE::log::info("stream rows: {} names {} - not a projectile of this load order", row.name, key);
+				} else {
+					SKSE::log::info("stream rows: {} names {} - not a projectile of this load order{}", row.name, key, Po3Tweaks::MissingHint(key));
 				}
 			}
 		}

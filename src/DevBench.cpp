@@ -27,12 +27,20 @@ namespace Plugin
 			R"json({"description":"Illuminated - Creature Lighting NG - the lighting found (automatic), the settings (the creatures switched off one by one among them), the creatures files read, the creature switches by group, the other creature lighting mods installed and the creatures each one lights too (ours replaces it there unless its switch gives them back), every creature lit around the player now with each light's color, fade, radius and its death / cast state, how many abilities that carry a light the game's apply event announced, how many casting lights a creature left up as its 3D went were put out, how many art objects (a hit art, an enchantment's art) carry a light of ours now, how many impact splashes do, the stream rows (rows and row lights now, and hung since the game started), and the cost in microseconds and the call count of the task that acts on what was noted. Read only.","inputSchema":{"type":"object","properties":{}},"readOnly":true})json";
 
 		constexpr const char* kTool =
-			R"json({"description":"Illuminated - Creature Lighting NG (lights creatures): change its settings the way its menu does, or light the creatures around the player again. action=set changes one setting (saved, then applied on the main thread) and replies with the state after it: lights (0/1), glow / spell / burst / eyes / machines (0/1, the five kinds), natural (0/1, ice, wind, water and stone creatures), brightness (10-300, percent), reach (25-300, percent), flicker / deathFade / castSurge (0/1), darkUntilNoticed (0/1, a creature's lights wait until it notices the player, rising while it searches, full in combat), TheirsEmissive / TheirsElementals / TheirsDarenii / TheirsLuminous / TheirsEnhanced / TheirsIlluminatedAtronachs / TheirsOther (0/1, that mod's creatures keep its own light and ours goes off on them; TheirsOther = every other mod that lights one of our creatures); CenturionSteam (0/1, the Dwarven Centurion's steam and the steam spells that use it); AshHand (0/1, the ash glow in the hands while the ash spells are cast); creature:<name> (0/1, one creature's own switch, a name from inspect's creatureList); menuPage (a test, never saved: 1 = the settings page in a window of its own for a picture, 0 = closed). action=rescan drops every light and lights the creatures around the player again at once. Read state with inspect kind=creaturelighting.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["set","rescan"]},"setting":{"anyOf":[{"type":"string","enum":["lights","glow","spell","burst","eyes","machines","natural","brightness","reach","flicker","deathFade","castSurge","darkUntilNoticed","TheirsEmissive","TheirsElementals","TheirsDarenii","TheirsLuminous","TheirsEnhanced","TheirsIlluminatedAtronachs","TheirsOther","CenturionSteam","AshHand","menuPage"]},{"type":"string","pattern":"^creature:.+"}]},"value":{"type":"number"}},"required":["action"]}})json";
+			R"json({"description":"Illuminated - Creature Lighting NG (lights creatures): change its settings the way its menu does, or light the creatures around the player again. action=set changes one setting (saved, then applied on the main thread) and replies with the state after it: lights (0/1), glow / spell / burst / eyes / machines (0/1, the five kinds), natural (0/1, ice, wind, water and stone creatures), brightness (10-300, percent), reach (25-300, percent), flicker / deathFade / castSurge (0/1), darkUntilNoticed (0/1, a creature's lights wait until it notices the player, rising while it searches, full in combat), noticeFlicker (0/1, with darkUntilNoticed a light flickers once it has faded up; 0 holds it steady), noGlowUndead (0/1, draugr and skeletons are lit even where a replacer emptied the draugr eye art; inspect's blankGlowArt says whether one did), TheirsEmissive / TheirsElementals / TheirsDarenii / TheirsLuminous / TheirsEnhanced / TheirsIlluminatedAtronachs / TheirsEnbShaderLights / TheirsOther (0/1, that mod's creatures keep its own light and ours goes off on them; TheirsEnbShaderLights = powerofthree's ENB Lights For Effect Shaders on our ghost shaders; TheirsOther = every other mod that lights one of our creatures); CenturionSteam (0/1, the Dwarven Centurion's steam and the steam spells that use it); AshHand (0/1, the ash glow in the hands while the ash spells are cast); creature:<name> (0/1, one creature's own switch, a name from inspect's creatureList); menuPage (a test, never saved: 1 = the settings page in a window of its own for a picture, 0 = closed). action=rescan drops every light and lights the creatures around the player again at once. Read state with inspect kind=creaturelighting.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["set","rescan"]},"setting":{"anyOf":[{"type":"string","enum":["lights","glow","spell","burst","eyes","machines","natural","brightness","reach","flicker","deathFade","castSurge","darkUntilNoticed","noticeFlicker","noGlowUndead","TheirsEmissive","TheirsElementals","TheirsDarenii","TheirsLuminous","TheirsEnhanced","TheirsIlluminatedAtronachs","TheirsEnbShaderLights","TheirsOther","CenturionSteam","AshHand","menuPage"]},{"type":"string","pattern":"^creature:.+"}]},"value":{"type":"number"}},"required":["action"]}})json";
+
+		// a creature's switch covers its spells: whether a creature is switched off, and the spell lights the switches culled on their casters since the game started
+		json SwitchCullsJson()
+		{
+			const auto c = SwitchCulls();
+			return json{ { "anyOff", AnyCreatureOff() }, { "projectiles", c[0] }, { "explosions", c[1] }, { "hazards", c[2] }, { "castingLights", c[3] }, { "beamRowLights", c[4] } };
+		}
 
 		json SettingsJson(const Anima::Settings& a_s)
 		{
 			json j{ { "lights", a_s.on }, { "natural", a_s.natural }, { "brightness", a_s.brightness }, { "reach", a_s.reach },
-				{ "flicker", a_s.flicker }, { "deathFade", a_s.deathFade }, { "castSurge", a_s.surge }, { "darkUntilNoticed", a_s.noticed } };
+				{ "flicker", a_s.flicker }, { "deathFade", a_s.deathFade }, { "castSurge", a_s.surge }, { "darkUntilNoticed", a_s.noticed },
+				{ "noticeFlicker", a_s.noticeFlicker }, { "noGlowUndead", a_s.noGlowUndead } };
 			for (std::size_t i = 0; i < Anima::kKinds; ++i) {
 				j[std::string(Anima::kKindNames[i])] = a_s.kinds[i];
 			}
@@ -42,6 +50,12 @@ namespace Plugin
 			for (std::size_t i = 0; i < Anima::kExtraCount; ++i) {
 				j[std::string(Anima::kExtras[i])] = a_s.extras[i];
 			}
+			// the menu's picks as saved now; inspect's picksRead holds the ones the creatures files were read with at game start
+			json picks = json::object();
+			for (std::size_t i = 0; i < Anima::kPickCount; ++i) {
+				picks[std::string(Anima::kPicks[i])] = a_s.picks[i];
+			}
+			j["picks"] = std::move(picks);
 			json off = json::array();
 			if (a_s.creaturesOff) {
 				for (const auto& creature : *a_s.creaturesOff) {
@@ -90,16 +104,26 @@ namespace Plugin
 			return out;
 		}
 
+		json PicksReadJson()
+		{
+			const auto read = PicksRead();
+			json       j = json::object();
+			for (std::size_t i = 0; i < Anima::kPickCount; ++i) {
+				j[std::string(Anima::kPicks[i])] = read[i];
+			}
+			return j;
+		}
+
 		// everything, read on the main thread (the lights are the main thread's)
 		json StateNow()
 		{
 			auto now = DevBenchGlue::OnMainThread([]() {
 				return json{ { "lighting", LightingName(LightingFound()) }, { "inverseSquare", InverseSquare() }, { "settings", SettingsJson(SettingsNow()) },
-					{ "creatureFiles", FilesRead() }, { "creatureRows", CreatureRowCount() }, { "creatureList", CreatureListJson() }, { "spellRecordsLit", SpellRecordCount() },
-					{ "otherMods", OthersJson() }, { "eyesMod", EyesModLoaded() }, { "lit", LitReport() },
+					{ "creatureFiles", FilesRead() }, { "creatureRows", CreatureRowCount() }, { "creatureList", CreatureListJson() }, { "spellRecordsLit", SpellRecordCount() }, { "spellRecordsOurs", SpellRecordsOurs() }, { "switchedOffSpells", SwitchCullsJson() },
+					{ "otherMods", OthersJson() }, { "eyesMod", EyesModLoaded() }, { "blankGlowArt", BlankGlowArt() }, { "lit", LitReport() },
 					{ "loadEvents", { { "litAbilities", LitAbilitiesNoted() }, { "hungAgain", LightsHungAgain() }, { "castLightsOut", CastLightsPutOut() } } }, { "artLit", ArtLitCount() }, { "impactLit", ImpactLitCount() }, { "objectsLit", ObjectLitCount() },
 					{ "impactSeen", { { "particles", ImpactSeen().first }, { "lastRecord", std::format("{:08X}", ImpactSeen().second) }, { "models", ImpactModelsSeen() } } },
-					{ "streams", StreamsJson() }, { "cost", CostJson() } };
+					{ "streams", StreamsJson() }, { "cost", CostJson() }, { "picksRead", PicksReadJson() } };
 			});
 			return now ? *now : DevBenchGlue::NotRunYet();
 		}
@@ -120,9 +144,10 @@ namespace Plugin
 		std::function<void(Anima::Settings&)> ChangeOf(const std::string& a_key, int a_v)
 		{
 			const bool                                                                on = a_v != 0;
-			const std::array<std::pair<std::string_view, bool Anima::Settings::*>, 6> switches{ { { "lights", &Anima::Settings::on },
+			const std::array<std::pair<std::string_view, bool Anima::Settings::*>, 8> switches{ { { "lights", &Anima::Settings::on },
 				{ "natural", &Anima::Settings::natural }, { "flicker", &Anima::Settings::flicker }, { "deathFade", &Anima::Settings::deathFade },
-				{ "castSurge", &Anima::Settings::surge }, { "darkUntilNoticed", &Anima::Settings::noticed } } };
+				{ "castSurge", &Anima::Settings::surge }, { "darkUntilNoticed", &Anima::Settings::noticed },
+				{ "noticeFlicker", &Anima::Settings::noticeFlicker }, { "noGlowUndead", &Anima::Settings::noGlowUndead } } };
 			for (const auto& [name, field] : switches) {
 				if (a_key == name) {
 					return [field, on](Anima::Settings& a_s) { a_s.*field = on; };

@@ -9,6 +9,8 @@
 // shows (a mod's script adds it): the game's events say so, and what a creature wears is read off it when it loads, never on a timer.
 
 #include "Plugin.h"
+#include "EnbShaderLights.h"
+#include "Po3Tweaks.h"
 
 #include "FadePickerAPI.h"
 
@@ -32,6 +34,8 @@ namespace Plugin
 		std::unordered_map<const RE::SpellItem*, std::vector<std::size_t>> gGhostSpells;
 		std::unordered_map<std::string, Anima::Lighters>                   gClaims;       // a body model other mods' Light Placer files light -> every one of those mods
 		std::unordered_map<std::string, std::string>                       gClaimFolder;  // the same model -> the Light Placer folder of a mod we do not name
+		// the same model -> per mod, each of its lights there with its blackList / whiteList: a form a light leaves out is not claimed by it
+		std::unordered_map<std::string, std::array<std::vector<Anima::LightFilter>, Anima::kOthers>> gClaimLights;
 		// a Light Placer file, told by a light's own name: the mod it belongs to and the models it names
 		struct ClaimFile
 		{
@@ -41,6 +45,7 @@ namespace Plugin
 		std::unordered_map<std::string, ClaimFile> gClaimFiles;
 		Anima::Lighters                            gFound{};
 		std::size_t                                gFiles{ 0 };
+		std::atomic<bool>                          gBlankArt{ false };  // a row's glow art (blankif=) draws nothing: the menu shows its switch
 		// gFound and the menu's lists: written on the main thread (a creature met in play adds to them), read by the menu's render thread
 		std::mutex gOthersLock;
 
@@ -69,6 +74,45 @@ namespace Plugin
 			}
 		}
 
+		// the glow art a row's light stands for, read through the game's own file system (loose files and archives, the winner as the
+		// game sees it); a file it cannot open counts as drawing, so nothing is taken away on a guess
+		[[nodiscard]] bool ArtDrawsSomething(const std::string& a_model)
+		{
+			RE::BSResourceNiBinaryStream stream("meshes\\" + a_model);
+			const auto*                  source = stream.good() ? stream.stream.get() : nullptr;
+			if (!source) {
+				return true;
+			}
+			std::string bytes;
+			std::string chunk(65536, '\0');
+			for (std::uint64_t got = 0; source->DoRead(chunk.data(), chunk.size(), got) == RE::BSResource::ErrorCode::kNone && got > 0;) {
+				bytes.append(chunk.data(), static_cast<std::size_t>(got));
+			}
+			// a read that broke off part way saw only some of the file: nothing is taken away on a part
+			return bytes.size() < source->totalSize || Anima::DrawsSomething(bytes);
+		}
+
+		// a row whose every blankif= model draws nothing (a replacer took that glow out) waits for its own switch: a light over no glow
+		void MarkBlankRows()
+		{
+			std::unordered_map<std::string, bool> draws;
+			std::size_t                           blank = 0;
+			for (auto& row : gRows) {
+				row.blank = !row.blankIf.empty() && std::ranges::none_of(row.blankIf, [&](const std::string& a_model) {
+					const auto [it, added] = draws.try_emplace(a_model, true);
+					if (added && !(it->second = ArtDrawsSomething(a_model))) {
+						SKSE::log::info("glow art meshes\\{} draws nothing (a replacer emptied it): the rows that stand for it wait for their switch", a_model);
+					}
+					return it->second;
+				});
+				blank += row.blank ? 1 : 0;
+			}
+			gBlankArt.store(blank > 0, std::memory_order_release);
+		}
+
+		// the patch picks the files were read with (a menu change after that waits for the next start); devbench reads them off its thread
+		std::array<std::atomic<int>, Anima::kPickCount> gPicksRead{};
+
 		void ReadFiles()
 		{
 			std::error_code                    ec;
@@ -81,11 +125,19 @@ namespace Plugin
 				}
 			}
 			std::ranges::sort(files);
+			const auto settings = SettingsNow();
+			for (std::size_t i = 0; i < Anima::kPickCount; ++i) {
+				gPicksRead[i].store(settings.picks[i], std::memory_order_relaxed);
+			}
 			for (const auto& path : files) {
 				std::ifstream in(path);
 				std::size_t   skipped = 0;
 				auto          rows = Anima::ReadCreatures(in, skipped);
-				SKSE::log::info("creatures file {}: {} creature(s){}", Utf8(path.filename()), rows.size(),
+				// a patch the menu did not pick stays out, and a row a picked patch replaces makes way: chosen here, once, at game start
+				const auto read = rows.size();
+				std::erase_if(rows, [&](const Anima::Row& a_row) { return !Anima::PickedIn(a_row, settings); });
+				SKSE::log::info("creatures file {}: {} creature(s){}{}", Utf8(path.filename()), rows.size(),
+					read != rows.size() ? std::format(", {} left to a patch's menu pick", read - rows.size()) : "",
 					skipped ? std::format(", {} block(s) left out (no creature named, or a color that does not read)", skipped) : "");
 				// the menu groups creatures by the file they come from, its name up to " - " ("Skyrim - Eyes and Machines" joins "Skyrim")
 				const auto stem = Utf8(path.stem());
@@ -106,6 +158,7 @@ namespace Plugin
 				std::erase_if(gRows, [](const Anima::Row& a_row) { return a_row.moved; });
 				SKSE::log::info("creatures files: {} moved row(s) left to the older Illuminated / RELight loaded", before - gRows.size());
 			}
+			MarkBlankRows();
 			// the menu's creature switches, one per creature a body row lights, in the files' order of groups, sorted inside each
 			gCreatureListReady.store(false, std::memory_order_release);
 			gCreatureList.clear();
@@ -129,21 +182,45 @@ namespace Plugin
 			gCreatureListReady.store(true, std::memory_order_release);
 		}
 
+		// the ghost shaders powerofthree's ENB Lights For Effect Shaders lights too, and which rows name one (data load, main thread): ours is
+		// the default there and its switch gives them back (ApplyEnbShaderLights)
+		std::vector<RE::TESEffectShader*>     gEnblShaders;
+		std::vector<std::vector<std::size_t>> gEnblShaderRows;  // beside gEnblShaders: the rows of ours that light each one
+		std::vector<bool>                     gEnblRows;
+
 		// a see-through creature (the game's ghosts, a spirit summon) wears an ability whose constant effect plays a ghost shader: every
 		// such ability is found once, so an actor is matched by the abilities of its own spell list (his 573)
 		template <class OnBody>
 		void IndexGhosts(OnBody a_onBody)
 		{
 			std::unordered_map<const RE::TESEffectShader*, std::vector<std::size_t>> byShader;
+			gEnblShaders.clear();
+			gEnblShaderRows.clear();
+			gEnblRows.assign(gRows.size(), false);
+			// its ini at 1 lights the player and her teammates - spirit summons among them - so ours takes its light off there too; at 0 it
+			// lights only the player, who wears no ghost row of ours
+			const bool enbl = EnbShaderLights::Installed() && EnbShaderLights::ValidActors() >= 1;
 			for (std::size_t i = 0; i < gRows.size(); ++i) {
 				if (!a_onBody(gRows[i])) {
 					continue;
 				}
 				for (const auto& key : gRows[i].shaders) {
 					auto* form = FormOfKey(key);
-					if (const auto* shader = form ? form->As<RE::TESEffectShader>() : nullptr) {
-						byShader[shader].push_back(i);
+					auto* shader = form ? form->As<RE::TESEffectShader>() : nullptr;
+					if (!shader) {
+						continue;
 					}
+					if (enbl && EnbShaderLights::Takes(shader)) {
+						gEnblRows[i] = true;
+						const auto at = std::ranges::find(gEnblShaders, shader);
+						if (at == gEnblShaders.end()) {
+							gEnblShaders.push_back(shader);
+							gEnblShaderRows.push_back({ i });
+						} else {
+							gEnblShaderRows[static_cast<std::size_t>(at - gEnblShaders.begin())].push_back(i);
+						}
+					}
+					byShader[shader].push_back(i);
 				}
 			}
 			if (byShader.empty()) {
@@ -304,6 +381,42 @@ namespace Plugin
 				gRows.size(), races, gByModel.size(), gBySkin.size(), gRowSkins.size());
 		}
 
+		// one list of a Light Placer light ("0x<id>~<plugin>" or an editor ID, Light Placer's way) as the forms of this load order it names
+		[[nodiscard]] std::vector<std::uint32_t> FormsNamed(const nlohmann::json& a_light, const char* a_key, bool& a_has)
+		{
+			std::vector<std::uint32_t> out;
+			const auto                 list = a_light.find(a_key);
+			if (list == a_light.end() || !list->is_array()) {
+				return out;
+			}
+			a_has = true;
+			for (const auto& key : *list) {
+				if (const auto* form = key.is_string() ? FormOfKey(key.get<std::string>()) : nullptr) {
+					out.push_back(form->GetFormID());
+				}
+			}
+			return out;
+		}
+
+		// every light of a Light Placer entry with its blackList / whiteList; an entry with no lights list claims every form
+		[[nodiscard]] std::vector<Anima::LightFilter> LightFiltersOf(const nlohmann::json& a_entry)
+		{
+			std::vector<Anima::LightFilter> out;
+			const auto                      lights = a_entry.find("lights");
+			if (lights == a_entry.end() || !lights->is_array()) {
+				return { Anima::LightFilter{} };
+			}
+			for (const auto& light : *lights) {
+				if (!light.is_object()) {
+					continue;
+				}
+				bool white = false;
+				bool black = false;
+				out.push_back(Anima::MakeFilter(FormsNamed(light, "whiteList", white), FormsNamed(light, "blackList", black)));
+			}
+			return out.empty() ? std::vector<Anima::LightFilter>{ Anima::LightFilter{} } : out;
+		}
+
 		// what the other creature lighting mods' Light Placer files light, by body model - only while Light Placer runs
 		void ReadClaims()
 		{
@@ -344,12 +457,15 @@ namespace Plugin
 					if (models == entry.end() || !models->is_array()) {
 						continue;
 					}
+					const auto filters = LightFiltersOf(entry);
 					for (const auto& m : *models) {
 						if (!m.is_string()) {
 							continue;
 						}
 						const auto path = Anima::NormalPath(m.get<std::string>());
 						gClaims[path][*mod] = true;  // two mods on one model are both named, each with its own switch
+						auto& lights = gClaimLights[path][*mod];
+						lights.insert(lights.end(), filters.begin(), filters.end());
 						claimFile.models.insert(path);
 						if (*mod == Anima::kOtherUnnamed) {
 							gClaimFolder.try_emplace(path, Utf8(*rel.begin()));
@@ -672,6 +788,15 @@ namespace Plugin
 		}
 	}
 
+	std::array<int, Anima::kPickCount> PicksRead()
+	{
+		std::array<int, Anima::kPickCount> out{};
+		for (std::size_t i = 0; i < Anima::kPickCount; ++i) {
+			out[i] = gPicksRead[i].load(std::memory_order_relaxed);
+		}
+		return out;
+	}
+
 	void ReadCreatures()
 	{
 		gRows.clear();
@@ -682,6 +807,7 @@ namespace Plugin
 		gSkinRaces.clear();
 		gGhostSpells.clear();
 		gClaims.clear();
+		gClaimLights.clear();
 		gClaimFolder.clear();
 		gClaimFiles.clear();
 		gAbilityLights.clear();
@@ -692,6 +818,11 @@ namespace Plugin
 		IndexRows();
 		ReadClaims();
 		FindAlsoLit();
+		for (std::size_t i = 0; i < gEnblRows.size(); ++i) {
+			if (gEnblRows[i]) {
+				AddAlsoLit(Anima::kEnbShaderLights, gRows[i], {});
+			}
+		}
 		gSkinRaces.clear();
 		FindAbilityLights();
 		FindEyesMod();
@@ -699,6 +830,25 @@ namespace Plugin
 			if (!gAlsoLit[m].empty()) {
 				SKSE::log::info("  {} lights {} of our creature(s) too - ours replaces it there unless its switch gives them back", Anima::kOtherMods[m].name, gAlsoLit[m].size());
 			}
+		}
+	}
+
+	void ApplyEnbShaderLights(const Anima::Settings& a_s)
+	{
+		std::size_t off = 0, back = 0;
+		for (std::size_t k = 0; k < gEnblShaders.size(); ++k) {
+			auto* shader = gEnblShaders[k];
+			// its light comes off only where a row of ours shows on that shader now (a kind, the ghosts or a creature switched off gives
+			// it back); with its switch on RowShows is false for every such row, so it gets them all back
+			const bool oursShows = k < gEnblShaderRows.size() && std::ranges::any_of(gEnblShaderRows[k], [&](std::size_t a_row) { return RowShows(a_row, a_s); });
+			if (oursShows) {
+				off += EnbShaderLights::TakeOff(shader) ? 1 : 0;
+			} else {
+				back += EnbShaderLights::GiveBack(shader) ? 1 : 0;
+			}
+		}
+		if (off || back) {
+			SKSE::log::info("ENB Lights For Effect Shaders: its light taken off {} ghost shader(s), given back on {}", off, back);
 		}
 	}
 
@@ -745,6 +895,21 @@ namespace Plugin
 		return out;
 	}
 
+	bool SwitchedOff(RE::Actor* a_actor, const Anima::Settings& a_s)
+	{
+		if (!a_actor || !a_s.creaturesOff || a_s.creaturesOff->empty()) {
+			return false;
+		}
+		// Anima::CasterSwitchedOff's test, read straight off the rows (no creature name copied): it runs inside the game's light-making call
+		// on loader and job threads, where only the rows' tables (fixed at data load) and the actor's static race and skin records are read
+		for (const auto i : RowsOf(a_actor)) {
+			if (Anima::OnThePicker(gRows[i].kind)) {
+				return !Anima::CreatureOn(a_s, gRows[i].creature);
+			}
+		}
+		return false;
+	}
+
 	bool CouldLight(RE::Actor* a_actor)
 	{
 		return a_actor && (gByRace.contains(a_actor->GetRace()) || gRowSkins.contains(SkinOf(a_actor)) || HasGhostSpell(a_actor));
@@ -760,9 +925,33 @@ namespace Plugin
 		if (!a_actor) {
 			return false;
 		}
+		// a mod claims this creature on a model only when one of its lights there reaches it (Light Placer's blackList / whiteList,
+		// against Light Placer's own filter ids, SourceData.cpp: the cell, the reference, its base, the worldspace, the location and its parents)
+		std::vector<std::uint32_t> ids;
+		if (const auto* cell = a_actor->GetParentCell()) {
+			ids.push_back(cell->GetFormID());
+		}
+		ids.push_back(a_actor->GetFormID());
+		if (const auto* base = a_actor->GetActorBase()) {
+			ids.push_back(base->GetFormID());
+		}
+		if (const auto* world = a_actor->GetWorldspace()) {
+			ids.push_back(world->GetFormID());
+		}
+		for (const auto* loc = a_actor->GetCurrentLocation(); loc; loc = loc->parentLoc) {
+			ids.push_back(loc->GetFormID());
+		}
 		const auto claimed = [&](const std::string& a_model) {
 			const auto it = gClaims.find(a_model);
-			return it != gClaims.end() && Anima::GivenBack(it->second, a_s);
+			if (it == gClaims.end()) {
+				return false;
+			}
+			auto       lighters = it->second;
+			const auto lights = gClaimLights.find(a_model);
+			for (std::size_t m = 0; lights != gClaimLights.end() && m < Anima::kOthers; ++m) {
+				lighters[m] = lighters[m] && Anima::ClaimsForm(lights->second[m], ids);
+			}
+			return Anima::GivenBack(lighters, a_s);
 		};
 		if (!gClaims.empty()) {
 			if (std::ranges::any_of(BodyModels(a_actor), claimed)) {
@@ -853,11 +1042,17 @@ namespace Plugin
 		if (!Anima::Shown(gRows[a_row], a_s) || Anima::TakenByEyesMod(gRows[a_row].kind, gEyesMod)) {
 			return false;
 		}
+		// a ghost row whose shader ENB Lights For Effect Shaders lights, given back to it by its switch
+		if (a_row < gEnblRows.size() && gEnblRows[a_row] && a_s.theirs[Anima::kEnbShaderLights]) {
+			return false;
+		}
 		const auto p = PickedFor(a_row);
 		return !p || !p->off;
 	}
 
 	bool EyesModLoaded() { return gEyesMod; }
+
+	bool BlankGlowArt() { return gBlankArt.load(std::memory_order_acquire); }
 
 	void TheirLights(RE::Actor* a_actor, RE::NiAVObject* a_root, const Anima::Settings& a_s, bool a_oursHung)
 	{
@@ -934,24 +1129,8 @@ namespace Plugin
 
 	bool OthersLightBodies() { return !gClaims.empty(); }
 
-	RE::TESForm* FormOfKey(std::string_view a_key)
-	{
-		const auto tilde = a_key.find('~');
-		auto*      dh = RE::TESDataHandler::GetSingleton();
-		if (tilde == std::string_view::npos || !dh) {
-			return nullptr;
-		}
-		auto hex = Anima::Trim(a_key.substr(0, tilde));
-		if (hex.starts_with("0x") || hex.starts_with("0X")) {
-			hex.remove_prefix(2);
-		}
-		RE::FormID id = 0;
-		const auto [end, ec] = std::from_chars(hex.data(), hex.data() + hex.size(), id, 16);
-		if (hex.empty() || ec != std::errc{} || end != hex.data() + hex.size()) {
-			return nullptr;
-		}
-		return dh->LookupForm(id, std::string(Anima::Trim(a_key.substr(tilde + 1))));
-	}
+	// "0x<id>~<plugin>", or an editor ID: the game keeps a race's or a keyword's itself, powerofthree's Tweaks the rest when installed
+	RE::TESForm* FormOfKey(std::string_view a_key) { return Po3Tweaks::FormOf(a_key); }
 
 	bool IsAbilityLight(RE::FormID a_effect) { return gAbilityLights.contains(a_effect); }
 

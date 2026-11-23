@@ -24,13 +24,11 @@ namespace StreamRows
 		Host                                   gHost{};
 		std::unordered_map<RE::FormID, Recipe> gRows;                // projectile base -> its row (main thread after Claim)
 		constexpr std::size_t                  kMostRowLights = 64;  // every row light in the scene together
+		constexpr int                          kMakeRetries = 30;    // back-to-back frames a failed make is retried before waiting for a release
 		constexpr std::size_t                  kMostPerRow = 20;
-		// off Community Shaders the game lets one piece of ground take only a few lights, so a row of 15 lit only the ground near her
-		// hands; fewer, wider lights reach the whole stream (BeamRow::Lay makes each stronger to keep the row's light)
-		constexpr std::size_t kMostPerRowPlain = 5;
-		constexpr float       kRowPlain = 0.5f;     // every row off Community Shaders
-		constexpr float       kRowHeight = 100.0f;  // a beam's usual height over the ground it lights
-		constexpr int         kShaders = 0, kEnb = 1, kVanilla = 2;
+		constexpr float                        kRowPlain = 0.5f;     // every row off Community Shaders
+		constexpr float                        kRowHeight = 100.0f;  // a beam's usual height over the ground it lights
+		constexpr int                          kShaders = 0, kEnb = 1, kVanilla = 2;
 
 		bool  InverseSquare() { return gHost.inverseSquare && gHost.inverseSquare(); }
 		int   LightingNow() { return gHost.lighting ? gHost.lighting() : kVanilla; }
@@ -45,9 +43,9 @@ namespace StreamRows
 		{
 			switch (a_lighting) {
 			case kVanilla:
-				return 1.1f;
+				return BeamRow::gTune.vanilla.load(std::memory_order_relaxed);
 			case kEnb:
-				return 0.5f;  // the whole stream lit, not washed out
+				return BeamRow::gTune.enb.load(std::memory_order_relaxed);
 			default:
 				return 1.0f;
 			}
@@ -87,8 +85,22 @@ namespace StreamRows
 			RE::NiPointer<RE::NiAVObject>           root;
 			RE::FormID                              base{ 0 };
 			std::vector<RE::NiPointer<RE::BSLight>> lights;
-			RE::NiPointer<RE::TESObjectREFR>        beam;  // its projectile, read every frame for its length
+			RE::NiPointer<RE::TESObjectREFR>        beam;       // its projectile, read every frame for its length
+			std::size_t                             want{ 0 };  // the lights its range asked for: fewer while the cap was full
 		};
+		bool gShort = false;  // main thread: a live row has fewer lights than it asked for (TopUpRows)
+		// a row let its lights go since the last awake frame: a short row is topped up, and a cap-parked projectile tried again, only then
+		std::atomic<bool> gRoomFreed{ false };
+		// the switches moved (Refresh): the rows a switch held back are tried once on the next frame, whether or not room was freed
+		std::atomic<bool> gSwitchesMoved{ false };
+		// a row with room under the cap got fewer lights than it had room for (no scene yet, the game refused one, no length yet): tried
+		// again next frame, as no other row's release may ever come to free room for it
+		std::atomic<bool> gMakeFailed{ false };
+		// main thread: failed makes retried back to back; past kMakeRetries the rows wait for a release or a switch change (a light the game
+		// keeps refusing is never retried every frame for the projectile's whole flight); a frame that hung fresh projectiles starts a new
+		// run, so a new row whose first make failed always gets its retries
+		int                                             gMakeRetryRun{ 0 };
+		bool                                            gHungFresh{ false };
 		std::unordered_map<const RE::NiAVObject*, Live> gLive;
 		std::mutex                                      gLiveLock;
 		// a projectile dropped under gLiveLock is let go only after it: its last reference running the game's release (our hooked
@@ -135,10 +147,11 @@ namespace StreamRows
 			std::uint32_t                    frames{ 0 };
 		};
 		std::vector<CloudWait>  gCloudWait;
-		constexpr std::uint32_t kCloudTries = 600;          // about ten seconds of frames: a cone's cast and its cloud's life
-		constexpr float         kCloudReachShaders = 3.0f;  // a row's x1 left Ice Storm's cloud faint on Community Shaders
+		constexpr std::uint32_t kCloudTries = 600;  // about ten seconds of frames: a cone's cast and its cloud's life
 
 		std::atomic<bool> gAwake{ true };
+		// a 3D of ours was released: the parked projectiles are pruned on the next awake frame, not on every one
+		std::atomic<bool> gReleased{ false };
 
 		// ------------------------------------------------------------------ forgetting one live projectile
 		// gLiveLock is held by every caller; the main thread's (the scene node is touched)
@@ -152,6 +165,9 @@ namespace StreamRows
 				LightKit::TakeOff(a_scene, bs);
 			}
 			gRowLights -= (std::min)(gRowLights, it->second.lights.size());
+			if (!it->second.lights.empty()) {
+				gRoomFreed.store(true, std::memory_order_relaxed);
+			}
 			// a row switched off while its projectile lives leaves no light node behind on it - a row hung again later starts clean
 			for (auto& bs : it->second.lights) {
 				if (auto* light = bs ? bs->light.get() : nullptr; light && light->parent) {
@@ -459,7 +475,7 @@ namespace StreamRows
 			}
 			const bool isl = InverseSquare();
 			// one light, not a row: where the inverse-square cap holds, its reach (and with it that cap) is its own
-			const float cloudReach = isl ? kCloudReachShaders : RowReachFor(LightingNow());
+			const float cloudReach = isl ? BeamRow::gTune.cloudReachShaders.load(std::memory_order_relaxed) : RowReachFor(LightingNow());
 			const float reach = rec->second.reach * ReachNow() * cloudReach;
 			const float rowBright = BrightnessNow();
 			const float want = rec->second.fade * rowBright * RowStrengthFor(LightingNow());
@@ -539,6 +555,7 @@ namespace StreamRows
 				return;
 			}
 			std::size_t n = 0;
+			std::size_t wanted = 0;
 			{
 				std::lock_guard l{ gLiveLock };
 				if (gLive.contains(a_root)) {
@@ -547,12 +564,17 @@ namespace StreamRows
 				if (gRowLights >= kMostRowLights) {
 					SweepGone(scene);
 				}
-				const auto most = InverseSquare() ? kMostPerRow : kMostPerRowPlain;
+				const auto most = InverseSquare() ? kMostPerRow : static_cast<std::size_t>(BeamRow::PlainLights());
 				const auto want = BeamRow::Lay(proj->GetProjectileRuntimeData().range, static_cast<int>(most), a_rec.reach, kRowHeight);
 				n = (std::min)(want.size(), kMostRowLights - (std::min)(gRowLights, kMostRowLights));
+				wanted = want.size();
 			}
 			if (!n) {
 				ParkRow(a_ref, RowPark::Why::kCap);  // the light cap is full: tried again when a row lets its lights go
+				if (!wanted) {
+					// no length to light yet, not the cap: no release would ever free room for it
+					gMakeFailed.store(true, std::memory_order_relaxed);
+				}
 				return;
 			}
 			const bool                              isl = InverseSquare();
@@ -578,12 +600,93 @@ namespace StreamRows
 			}
 			if (made.empty()) {
 				ParkRow(a_ref, RowPark::Why::kCap);
+				gMakeFailed.store(true, std::memory_order_relaxed);
 				return;
+			}
+			if (made.size() < n) {
+				gMakeFailed.store(true, std::memory_order_relaxed);  // some lights it had room for were not made: topped up next frame
 			}
 			std::lock_guard l{ gLiveLock };
 			gRowLights += made.size();
-			gLive.emplace(a_root, Live{ RE::NiPointer<RE::NiAVObject>(a_root), a_base, std::move(made), RE::NiPointer<RE::TESObjectREFR>(a_ref) });
+			gShort = gShort || made.size() < wanted;
+			gLive.emplace(a_root, Live{ RE::NiPointer<RE::NiAVObject>(a_root), a_base, std::move(made), RE::NiPointer<RE::TESObjectREFR>(a_ref), wanted });
 			MoveRows();  // laid out at once, not a frame late
+		}
+
+		// a row hung with fewer lights than its range asked for (the cap was full) gets the rest once room frees: never past the cap,
+		// never replacing a light it has. Main thread
+		void TopUpRows()
+		{
+			auto* scene = LightKit::Scene();
+			if (!scene) {
+				return;
+			}
+			struct Short
+			{
+				const RE::NiAVObject* root{ nullptr };
+				RE::NiNode*           node{ nullptr };
+				RE::FormID            base{ 0 };
+				std::size_t           missing{ 0 };
+			};
+			std::vector<Short> shorts;
+			{
+				std::lock_guard l{ gLiveLock };
+				std::size_t     room = kMostRowLights - (std::min)(gRowLights, kMostRowLights);
+				gShort = false;
+				for (auto& [root, live] : gLive) {
+					if (live.lights.size() >= live.want || !live.root || !live.root->parent || !live.root->AsNode()) {
+						continue;
+					}
+					const auto missing = (std::min)(live.want - live.lights.size(), room);
+					gShort = gShort || missing < live.want - live.lights.size();
+					if (missing) {
+						room -= missing;
+						shorts.push_back({ root, live.root->AsNode(), live.base, missing });
+					}
+				}
+			}
+			const bool isl = InverseSquare();
+			for (const auto& s : shorts) {
+				const auto rec = gRows.find(s.base);
+				if (rec == gRows.end()) {
+					continue;
+				}
+				std::vector<RE::NiPointer<RE::BSLight>> made;
+				for (std::size_t i = 0; i < s.missing; ++i) {
+					auto* light = LightKit::CloneLight();
+					if (!light) {
+						break;
+					}
+					light->name = gHost.rowName;
+					Dress(light, rec->second.color, 0.0f, 1.0f, isl);  // dark until MoveRows lays it out
+					light->local.translate = {};
+					light->local.scale = 1.0f;
+					if (auto* bs = LightKit::Hang(s.node, light, scene, 2.0f)) {
+						made.emplace_back(bs);
+					}
+				}
+				std::lock_guard l{ gLiveLock };
+				if (const auto it = gLive.find(s.root); it != gLive.end()) {
+					gRowLights += made.size();
+					it->second.lights.insert(it->second.lights.end(), made.begin(), made.end());
+					// a light that could not be made or hung leaves the row short: tried again next frame, not only after a release
+					if (made.size() < s.missing) {
+						gShort = true;
+						gMakeFailed.store(true, std::memory_order_relaxed);
+					}
+					continue;
+				}
+				for (auto& bs : made) {
+					LightKit::TakeOff(scene, bs);
+					if (auto* light = bs ? bs->light.get() : nullptr; light && light->parent) {
+						light->parent->DetachChild(light);
+					}
+				}
+			}
+			if (!shorts.empty()) {
+				std::lock_guard l{ gLiveLock };
+				MoveRows();
+			}
 		}
 
 		void HangFor(RE::TESObjectREFR* a_ref, RE::NiAVObject* a_object)
@@ -605,13 +708,8 @@ namespace StreamRows
 				return;
 			}
 			std::lock_guard l{ gLiveLock };
-			if (!gLive.contains(root)) {
-				return;
-			}
-			if (OnMainThread()) {
-				Forget(root, LightKit::Scene());
-			} else {
-				gToDrop.emplace_back(root);
+			if (gLive.contains(root)) {
+				Forget(root, LightKit::Scene());  // main thread only (the release hook)
 			}
 		}
 
@@ -623,19 +721,25 @@ namespace StreamRows
 		{
 			static RE::NiAVObject* thunk(T* a_this, bool a_backgroundLoading)
 			{
-				auto*       object = original(a_this, a_backgroundLoading);
-				const auto* base = a_this ? a_this->GetBaseObject() : nullptr;
-				if (object && base && gRows.contains(base->GetFormID())) {
-					LightKit::Guarded("stream row (3D load)", [&]() {
-						if (OnMainThread()) {
-							HangFor(a_this, object);
-						} else {
-							std::lock_guard l{ gLiveLock };
-							gToHang.emplace_back(a_this);  // held by its refcount, no handle made on this thread
-						}
-					});
-					gAwake.store(true, std::memory_order_relaxed);  // after the work: the pass goes to sleep only under gLiveLock
+				auto* object = original(a_this, a_backgroundLoading);
+				if (!object || !a_this) {
+					return object;
 				}
+				if (OnMainThread()) {
+					const auto* base = a_this->GetBaseObject();
+					if (base && gRows.contains(base->GetFormID())) {
+						LightKit::Guarded("stream row (3D load)", [&]() { HangFor(a_this, object); });
+						gHungFresh = true;
+						gAwake.store(true, std::memory_order_relaxed);  // after the work: the pass goes to sleep only under gLiveLock
+					}
+					return object;
+				}
+				// off the main thread nothing of the game is read: queued by its refcount, the main thread asks its record (HangFor)
+				LightKit::Guarded("stream row (3D load)", [&]() {
+					std::lock_guard l{ gLiveLock };
+					gToHang.emplace_back(a_this);
+					gAwake.store(true, std::memory_order_relaxed);
+				});
 				return object;
 			}
 
@@ -649,12 +753,27 @@ namespace StreamRows
 		{
 			static void thunk(T* a_this)
 			{
-				const auto* base = a_this ? a_this->GetBaseObject() : nullptr;
-				if (base && gRows.contains(base->GetFormID())) {
-					LightKit::Guarded("stream row (3D release)", [a_this]() { DropFor(a_this); });
+				// the row goes here on the main thread only; off it nothing of the game is read and the flag below has the next awake frame
+				// sweep the rows whose 3D left the world (SweepGone, per entry)
+				const bool main = OnMainThread();
+				bool       ours = false;
+				if (main) {
+					const auto* base = a_this ? a_this->GetBaseObject() : nullptr;
+					ours = base && gRows.contains(base->GetFormID());
+					if (ours) {
+						LightKit::Guarded("stream row (3D release)", [a_this]() { DropFor(a_this); });
+						gAwake.store(true, std::memory_order_relaxed);
+					}
+				}
+				ours = ours || !main;
+				original(a_this);
+				// noted after the game's release, so the next frame's prune already reads this projectile as ended
+				// under gLiveLock with the wake, as the pass decides to sleep: a release can never land between that decision and the flag
+				if (ours) {
+					std::lock_guard l{ gLiveLock };
+					gReleased.store(true, std::memory_order_relaxed);
 					gAwake.store(true, std::memory_order_relaxed);
 				}
-				original(a_this);
 			}
 
 			static inline REL::Relocation<decltype(thunk)> original;
@@ -696,18 +815,25 @@ namespace StreamRows
 		// a row goes with its switch at once; it is hung again when the switch comes back while its projectile still flies: every row a
 		// switch held back is tried once on the next frame
 		gParked.Wake(Ended);
+		// parked after the lock: parking lets ended projectiles go, and a last reference let go under gLiveLock runs the game's release
+		// (our hooked Release3DRelatedData), which takes the lock again on this thread
+		std::vector<RE::NiPointer<RE::TESObjectREFR>> heldBack;
 		{
 			auto*           scene = LightKit::Scene();
 			std::lock_guard l{ gLiveLock };
-			ForgetIf(scene, [](const Live& a_live) {
+			ForgetIf(scene, [&heldBack](const Live& a_live) {
 				const auto rec = gRows.find(a_live.base);
 				const bool off = rec == gRows.end() || !RowOn(rec->second);
 				if (off && rec != gRows.end()) {
-					ParkRow(a_live.beam.get(), RowPark::Why::kHeldBack);
+					heldBack.push_back(a_live.beam);
 				}
 				return off;
 			});
 		}
+		for (const auto& ref : heldBack) {
+			ParkRow(ref.get(), RowPark::Why::kHeldBack);
+		}
+		gSwitchesMoved.store(true, std::memory_order_relaxed);
 		gAwake.store(true, std::memory_order_relaxed);
 	}
 
@@ -726,8 +852,36 @@ namespace StreamRows
 				letGo.swap(gLetGo);
 			}
 		}
-		// a row the light cap held back (or one a switch change woke): tried again while its projectile flies, let go when that ends
-		if (gParked.KeepsAwake()) {
+		// a projectile parked by its switch that has ended is let go on the awake frame after its release, not held until the switches
+		// move (the lock is free); a frame with no release looks at none of them
+		if (gReleased.exchange(false, std::memory_order_relaxed)) {
+			gParked.Prune(Ended);
+			std::lock_guard l{ gLiveLock };
+			SweepGone(LightKit::Scene());  // a row whose projectile was released off the main thread
+		}
+		// read once for both retries below, so neither consumes it before the other has looked; a release later in this frame sets it again
+		const bool roomFreed = gRoomFreed.exchange(false, std::memory_order_relaxed);
+		const bool switchesMoved = gSwitchesMoved.exchange(false, std::memory_order_relaxed);
+		const bool madeShort = gMakeFailed.exchange(false, std::memory_order_relaxed);
+		if (roomFreed || switchesMoved || !madeShort || gHungFresh) {
+			gMakeRetryRun = 0;
+		}
+		gHungFresh = false;
+		const bool makeFailed = madeShort && ++gMakeRetryRun <= kMakeRetries;
+		// a row hung short: topped up once a row has let its lights go, or next frame when lights it had room for were not made
+		if (gShort && (roomFreed || switchesMoved || makeFailed)) {
+			bool room = false;
+			{
+				std::lock_guard l{ gLiveLock };
+				room = gRowLights < kMostRowLights;
+			}
+			if (room) {
+				TopUpRows();
+			}
+		}
+		// a row the light cap held back: tried again only once a row has let its lights go, a switch change woke it or its lights could
+		// not be made - never every frame while the cap stays full; let go when its projectile ends
+		if (gParked.KeepsAwake() && (roomFreed || switchesMoved || makeFailed)) {
 			bool room = false;
 			{
 				std::lock_guard l{ gLiveLock };
@@ -766,7 +920,8 @@ namespace StreamRows
 				MoveRows();  // every row follows its real length this frame
 			}
 			if (gToHang.empty() && gToDrop.empty()) {
-				if (gLive.empty() && gLetGo.empty() && !gParked.KeepsAwake() && gCloudWait.empty() && gClouds.empty()) {
+				if (gLive.empty() && gLetGo.empty() && !gParked.KeepsAwake() && gCloudWait.empty() && gClouds.empty() &&
+					!gReleased.load(std::memory_order_relaxed)) {
 					gAwake.store(false, std::memory_order_relaxed);
 				}
 				return;
@@ -778,6 +933,7 @@ namespace StreamRows
 			gToDrop.clear();
 			hang.swap(gToHang);
 		}
+		gHungFresh = gHungFresh || !hang.empty();
 		for (const auto& ref : hang) {
 			// a 3D released before this frame is gone (or another one now): lit only when the 3D it holds now is in the world
 			if (auto* root = ref ? ref->Get3D() : nullptr; root && root->parent) {
@@ -810,6 +966,7 @@ namespace StreamRows
 		letGo.insert(letGo.end(), std::make_move_iterator(gLetGo.begin()), std::make_move_iterator(gLetGo.end()));
 		gLetGo.clear();
 		gRowLights = 0;
+		gRoomFreed.store(true, std::memory_order_relaxed);  // the next awake frame clears a stale gShort
 	}
 
 	bool Claims(RE::FormID a_base) { return gRows.contains(a_base); }

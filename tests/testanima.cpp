@@ -824,6 +824,9 @@ namespace
 			CHECK(!Anima::ClaimsForm(onlyBlack, burst) && Anima::ClaimsForm(onlyBlack, flame));
 			CHECK(Anima::ClaimsForm({ black, plain }, burst) && Anima::ClaimsForm({}, burst));
 			CHECK(Anima::FilterLights(white, flame) && !Anima::FilterLights(white, burst) && !Anima::FilterLights(whiteMissing, flame));
+			// the reader's way: a whiteList that resolved to no form filters nothing (Light Placer's IsInvalid), one that did keeps filtering
+			CHECK(!Anima::MakeFilter({}, {}).hasOnly && Anima::FilterLights(Anima::MakeFilter({}, {}), flame) &&
+				  Anima::MakeFilter({ 0x23AA6u }, {}).hasOnly && !Anima::FilterLights(Anima::MakeFilter({ 0x23AA6u }, {}), burst));
 		}
 		// values read off the file set the tuning, a count rounded and never below 0
 		const std::array<float, 12> mine{ 4.0f, 2.0f, 0.0f, 1.0f, 0.5f, 6.0f, 0.1f, 1.0f, 1.5f, 0.75f, 2.0f, 5.0f };

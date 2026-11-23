@@ -399,11 +399,9 @@ namespace Plugin
 				if (!light.is_object()) {
 					continue;
 				}
-				Anima::LightFilter f;
-				bool               black = false;
-				f.only = FormsNamed(light, "whiteList", f.hasOnly);
-				f.never = FormsNamed(light, "blackList", black);
-				out.push_back(std::move(f));
+				bool white = false;
+				bool black = false;
+				out.push_back(Anima::MakeFilter(FormsNamed(light, "whiteList", white), FormsNamed(light, "blackList", black)));
 			}
 			return out.empty() ? std::vector<Anima::LightFilter>{ Anima::LightFilter{} } : out;
 		}
@@ -908,10 +906,22 @@ namespace Plugin
 			return false;
 		}
 		// a mod claims this creature on a model only when one of its lights there reaches it (Light Placer's blackList / whiteList,
-		// against the reference and its base, as Light Placer reads them)
-		const auto*                      base = a_actor->GetActorBase();
-		const std::vector<std::uint32_t> ids{ a_actor->GetFormID(), base ? base->GetFormID() : 0u };
-		const auto                       claimed = [&](const std::string& a_model) {
+		// against Light Placer's own filter ids, SourceData.cpp: the cell, the reference, its base, the worldspace, the location and its parents)
+		std::vector<std::uint32_t> ids;
+		if (const auto* cell = a_actor->GetParentCell()) {
+			ids.push_back(cell->GetFormID());
+		}
+		ids.push_back(a_actor->GetFormID());
+		if (const auto* base = a_actor->GetActorBase()) {
+			ids.push_back(base->GetFormID());
+		}
+		if (const auto* world = a_actor->GetWorldspace()) {
+			ids.push_back(world->GetFormID());
+		}
+		for (const auto* loc = a_actor->GetCurrentLocation(); loc; loc = loc->parentLoc) {
+			ids.push_back(loc->GetFormID());
+		}
+		const auto claimed = [&](const std::string& a_model) {
 			const auto it = gClaims.find(a_model);
 			if (it == gClaims.end()) {
 				return false;

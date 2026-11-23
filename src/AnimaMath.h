@@ -483,8 +483,8 @@ namespace Anima
 	inline constexpr std::size_t             kOtherUnnamed = kOthers - 1;
 	using Lighters = std::array<bool, kOthers>;
 
-	// one light of another mod's Light Placer entry, as Light Placer filters it: never the forms its blackList names, and only the forms its
-	// whiteList names when it has one (a whiteList whose forms are all missing from the load order lights nothing). Form ids as loaded
+	// one light of another mod's Light Placer entry, as Light Placer filters it (ConfigData.cpp IsInvalid): never the forms its blackList
+	// names, and only the forms its whiteList names when that list resolved to any (an empty or all-missing whiteList filters nothing)
 	struct LightFilter
 	{
 		bool                       hasOnly{ false };
@@ -492,7 +492,17 @@ namespace Anima
 		std::vector<std::uint32_t> never;
 	};
 
-	// does this light reach a reference whose own and base form ids are a_ids
+	// a light's filter from the forms its two lists resolved to: a whiteList counts only when it resolved to any form
+	[[nodiscard]] inline LightFilter MakeFilter(std::vector<std::uint32_t> a_only, std::vector<std::uint32_t> a_never)
+	{
+		LightFilter f;
+		f.hasOnly = !a_only.empty();
+		f.only = std::move(a_only);
+		f.never = std::move(a_never);
+		return f;
+	}
+
+	// does this light reach a reference whose filter ids (its cell, itself, its base, worldspace, location and parent locations) are a_ids
 	[[nodiscard]] inline bool FilterLights(const LightFilter& a_light, const std::vector<std::uint32_t>& a_ids)
 	{
 		const auto named = [&](const std::vector<std::uint32_t>& a_list) {

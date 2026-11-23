@@ -648,12 +648,16 @@ namespace StreamRows
 			static void thunk(T* a_this)
 			{
 				const auto* base = a_this ? a_this->GetBaseObject() : nullptr;
-				if (base && gRows.contains(base->GetFormID())) {
+				const bool  ours = base && gRows.contains(base->GetFormID());
+				if (ours) {
 					LightKit::Guarded("stream row (3D release)", [a_this]() { DropFor(a_this); });
-					gReleased.store(true, std::memory_order_relaxed);
 					gAwake.store(true, std::memory_order_relaxed);
 				}
 				original(a_this);
+				// noted after the game's release, so the next frame's prune already reads this projectile as ended
+				if (ours) {
+					gReleased.store(true, std::memory_order_relaxed);
+				}
 			}
 
 			static inline REL::Relocation<decltype(thunk)> original;

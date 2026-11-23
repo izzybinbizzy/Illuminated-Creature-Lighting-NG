@@ -119,7 +119,9 @@ namespace Plugin
 						return;
 					}
 					const auto ref = a_first ? a_first : handle.get();
-					auto*      root = ref && !ref->IsDeleted() ? ref->Get3D() : nullptr;
+					// a paused game moves no row and its projectile's livingTime stands still: the chain waits without walking
+					auto* ui = RE::UI::GetSingleton();
+					auto* root = ref && !ref->IsDeleted() && !(ui && ui->GameIsPaused()) ? ref->Get3D() : nullptr;
 					if (root) {
 						RE::BSVisit::TraverseScenegraphLights(root, [](RE::NiPointLight* a_light) {
 							if (StreamRows::IsRowLight(a_light) && !a_light->GetAppCulled()) {

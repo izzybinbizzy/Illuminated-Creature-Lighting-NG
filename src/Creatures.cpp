@@ -34,6 +34,8 @@ namespace Plugin
 		std::unordered_map<const RE::SpellItem*, std::vector<std::size_t>> gGhostSpells;
 		std::unordered_map<std::string, Anima::Lighters>                   gClaims;       // a body model other mods' Light Placer files light -> every one of those mods
 		std::unordered_map<std::string, std::string>                       gClaimFolder;  // the same model -> the Light Placer folder of a mod we do not name
+		// the same model -> per mod, each of its lights there with its blackList / whiteList: a form a light leaves out is not claimed by it
+		std::unordered_map<std::string, std::array<std::vector<Anima::LightFilter>, Anima::kOthers>> gClaimLights;
 		// a Light Placer file, told by a light's own name: the mod it belongs to and the models it names
 		struct ClaimFile
 		{
@@ -368,6 +370,44 @@ namespace Plugin
 				gRows.size(), races, gByModel.size(), gBySkin.size(), gRowSkins.size());
 		}
 
+		// one list of a Light Placer light ("0x<id>~<plugin>" or an editor ID, Light Placer's way) as the forms of this load order it names
+		[[nodiscard]] std::vector<std::uint32_t> FormsNamed(const nlohmann::json& a_light, const char* a_key, bool& a_has)
+		{
+			std::vector<std::uint32_t> out;
+			const auto                 list = a_light.find(a_key);
+			if (list == a_light.end() || !list->is_array()) {
+				return out;
+			}
+			a_has = true;
+			for (const auto& key : *list) {
+				if (const auto* form = key.is_string() ? FormOfKey(key.get<std::string>()) : nullptr) {
+					out.push_back(form->GetFormID());
+				}
+			}
+			return out;
+		}
+
+		// every light of a Light Placer entry with its blackList / whiteList; an entry with no lights list claims every form
+		[[nodiscard]] std::vector<Anima::LightFilter> LightFiltersOf(const nlohmann::json& a_entry)
+		{
+			std::vector<Anima::LightFilter> out;
+			const auto                      lights = a_entry.find("lights");
+			if (lights == a_entry.end() || !lights->is_array()) {
+				return { Anima::LightFilter{} };
+			}
+			for (const auto& light : *lights) {
+				if (!light.is_object()) {
+					continue;
+				}
+				Anima::LightFilter f;
+				bool               black = false;
+				f.only = FormsNamed(light, "whiteList", f.hasOnly);
+				f.never = FormsNamed(light, "blackList", black);
+				out.push_back(std::move(f));
+			}
+			return out.empty() ? std::vector<Anima::LightFilter>{ Anima::LightFilter{} } : out;
+		}
+
 		// what the other creature lighting mods' Light Placer files light, by body model - only while Light Placer runs
 		void ReadClaims()
 		{
@@ -408,12 +448,15 @@ namespace Plugin
 					if (models == entry.end() || !models->is_array()) {
 						continue;
 					}
+					const auto filters = LightFiltersOf(entry);
 					for (const auto& m : *models) {
 						if (!m.is_string()) {
 							continue;
 						}
 						const auto path = Anima::NormalPath(m.get<std::string>());
 						gClaims[path][*mod] = true;  // two mods on one model are both named, each with its own switch
+						auto& lights = gClaimLights[path][*mod];
+						lights.insert(lights.end(), filters.begin(), filters.end());
 						claimFile.models.insert(path);
 						if (*mod == Anima::kOtherUnnamed) {
 							gClaimFolder.try_emplace(path, Utf8(*rel.begin()));
@@ -746,6 +789,7 @@ namespace Plugin
 		gSkinRaces.clear();
 		gGhostSpells.clear();
 		gClaims.clear();
+		gClaimLights.clear();
 		gClaimFolder.clear();
 		gClaimFiles.clear();
 		gAbilityLights.clear();
@@ -863,9 +907,21 @@ namespace Plugin
 		if (!a_actor) {
 			return false;
 		}
-		const auto claimed = [&](const std::string& a_model) {
+		// a mod claims this creature on a model only when one of its lights there reaches it (Light Placer's blackList / whiteList,
+		// against the reference and its base, as Light Placer reads them)
+		const auto*                      base = a_actor->GetActorBase();
+		const std::vector<std::uint32_t> ids{ a_actor->GetFormID(), base ? base->GetFormID() : 0u };
+		const auto                       claimed = [&](const std::string& a_model) {
 			const auto it = gClaims.find(a_model);
-			return it != gClaims.end() && Anima::GivenBack(it->second, a_s);
+			if (it == gClaims.end()) {
+				return false;
+			}
+			auto       lighters = it->second;
+			const auto lights = gClaimLights.find(a_model);
+			for (std::size_t m = 0; lights != gClaimLights.end() && m < Anima::kOthers; ++m) {
+				lighters[m] = lighters[m] && Anima::ClaimsForm(lights->second[m], ids);
+			}
+			return Anima::GivenBack(lighters, a_s);
 		};
 		if (!gClaims.empty()) {
 			if (std::ranges::any_of(BodyModels(a_actor), claimed)) {

@@ -811,6 +811,20 @@ namespace
 		CHECK(Near(LightKit::DimmerShare(0.0f, 1.0f, 1.0f, 0.0f, std::nanf(""), false), 1.0f) &&
 			  Near(LightKit::DimmerShare(0.0f, 1.0f, 1.0f, 0.0f, std::nanf(""), true), 1.0f));
 		CHECK(Anima::SurgeLift(0.9f) > 1.0f && Near(Anima::SurgeLift(1.2f), 1.0f));
+		// a Light Placer light's blackList / whiteList (the claim reader): a blackListed creature is not claimed by that light, a
+		// whiteList claims only its forms (none when its forms are all missing), and no light read claims every creature
+		{
+			const Anima::LightFilter              plain{};
+			const Anima::LightFilter              black{ false, {}, { 0x60DAFu } };
+			const Anima::LightFilter              white{ true, { 0x23AA6u }, {} };
+			const Anima::LightFilter              whiteMissing{ true, {}, {} };
+			const std::vector<std::uint32_t>      burst{ 0xFF000A75u, 0x60DAFu };
+			const std::vector<std::uint32_t>      flame{ 0xFF0008E2u, 0x23AA6u };
+			const std::vector<Anima::LightFilter> onlyBlack{ black };
+			CHECK(!Anima::ClaimsForm(onlyBlack, burst) && Anima::ClaimsForm(onlyBlack, flame));
+			CHECK(Anima::ClaimsForm({ black, plain }, burst) && Anima::ClaimsForm({}, burst));
+			CHECK(Anima::FilterLights(white, flame) && !Anima::FilterLights(white, burst) && !Anima::FilterLights(whiteMissing, flame));
+		}
 		// values read off the file set the tuning, a count rounded and never below 0
 		const std::array<float, 12> mine{ 4.0f, 2.0f, 0.0f, 1.0f, 0.5f, 6.0f, 0.1f, 1.0f, 1.5f, 0.75f, 2.0f, 5.0f };
 		const auto                  m = Anima::TuningOf(mine);

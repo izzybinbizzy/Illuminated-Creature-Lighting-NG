@@ -483,6 +483,33 @@ namespace Anima
 	inline constexpr std::size_t             kOtherUnnamed = kOthers - 1;
 	using Lighters = std::array<bool, kOthers>;
 
+	// one light of another mod's Light Placer entry, as Light Placer filters it: never the forms its blackList names, and only the forms its
+	// whiteList names when it has one (a whiteList whose forms are all missing from the load order lights nothing). Form ids as loaded
+	struct LightFilter
+	{
+		bool                       hasOnly{ false };
+		std::vector<std::uint32_t> only;
+		std::vector<std::uint32_t> never;
+	};
+
+	// does this light reach a reference whose own and base form ids are a_ids
+	[[nodiscard]] inline bool FilterLights(const LightFilter& a_light, const std::vector<std::uint32_t>& a_ids)
+	{
+		const auto named = [&](const std::vector<std::uint32_t>& a_list) {
+			return std::ranges::any_of(a_ids, [&](std::uint32_t a_id) { return a_id != 0 && std::ranges::find(a_list, a_id) != a_list.end(); });
+		};
+		if (a_light.hasOnly && !named(a_light.only)) {
+			return false;
+		}
+		return !named(a_light.never);
+	}
+
+	// a model one mod's file names claims a reference only when one of its lights there reaches it; no light read claims every reference
+	[[nodiscard]] inline bool ClaimsForm(const std::vector<LightFilter>& a_lights, const std::vector<std::uint32_t>& a_ids)
+	{
+		return a_lights.empty() || std::ranges::any_of(a_lights, [&](const LightFilter& a_light) { return FilterLights(a_light, a_ids); });
+	}
+
 	// A mod whose Light Placer folders have plain names ("Atronachs", "Draugr") is known by the exact pair of folder and file name,
 	// so another mod's folder of the same name is not taken for it. The Emissive series: one folder per creature download, its files
 	// named after what they light.

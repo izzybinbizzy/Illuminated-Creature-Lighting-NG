@@ -91,7 +91,10 @@ namespace StreamRows
 		// a row let its lights go since the last awake frame: a short row is topped up, and a cap-parked projectile tried again, only then
 		std::atomic<bool> gRoomFreed{ false };
 		// the switches moved (Refresh): the rows a switch held back are tried once on the next frame, whether or not room was freed
-		std::atomic<bool>                               gSwitchesMoved{ false };
+		std::atomic<bool> gSwitchesMoved{ false };
+		// a row with room under the cap got fewer lights than it had room for (no scene yet, the game refused one, no length yet): tried
+		// again next frame, as no other row's release may ever come to free room for it
+		std::atomic<bool>                               gMakeFailed{ false };
 		std::unordered_map<const RE::NiAVObject*, Live> gLive;
 		std::mutex                                      gLiveLock;
 		// a projectile dropped under gLiveLock is let go only after it: its last reference running the game's release (our hooked
@@ -562,6 +565,10 @@ namespace StreamRows
 			}
 			if (!n) {
 				ParkRow(a_ref, RowPark::Why::kCap);  // the light cap is full: tried again when a row lets its lights go
+				if (!wanted) {
+					// no length to light yet, not the cap: no release would ever free room for it
+					gMakeFailed.store(true, std::memory_order_relaxed);
+				}
 				return;
 			}
 			const bool                              isl = InverseSquare();
@@ -587,7 +594,11 @@ namespace StreamRows
 			}
 			if (made.empty()) {
 				ParkRow(a_ref, RowPark::Why::kCap);
+				gMakeFailed.store(true, std::memory_order_relaxed);
 				return;
+			}
+			if (made.size() < n) {
+				gMakeFailed.store(true, std::memory_order_relaxed);  // some lights it had room for were not made: topped up next frame
 			}
 			std::lock_guard l{ gLiveLock };
 			gRowLights += made.size();
@@ -652,8 +663,11 @@ namespace StreamRows
 				if (const auto it = gLive.find(s.root); it != gLive.end()) {
 					gRowLights += made.size();
 					it->second.lights.insert(it->second.lights.end(), made.begin(), made.end());
-					// a light that could not be made or hung leaves the row short: tried again once there is room
-					gShort = gShort || made.size() < s.missing;
+					// a light that could not be made or hung leaves the row short: tried again next frame, not only after a release
+					if (made.size() < s.missing) {
+						gShort = true;
+						gMakeFailed.store(true, std::memory_order_relaxed);
+					}
 					continue;
 				}
 				for (auto& bs : made) {
@@ -841,8 +855,9 @@ namespace StreamRows
 		// read once for both retries below, so neither consumes it before the other has looked; a release later in this frame sets it again
 		const bool roomFreed = gRoomFreed.exchange(false, std::memory_order_relaxed);
 		const bool switchesMoved = gSwitchesMoved.exchange(false, std::memory_order_relaxed);
-		// a row hung short while the cap was full: topped up once a row has let its lights go (never every frame)
-		if (gShort && roomFreed) {
+		const bool makeFailed = gMakeFailed.exchange(false, std::memory_order_relaxed);
+		// a row hung short: topped up once a row has let its lights go, or next frame when lights it had room for were not made
+		if (gShort && (roomFreed || makeFailed)) {
 			bool room = false;
 			{
 				std::lock_guard l{ gLiveLock };
@@ -852,9 +867,9 @@ namespace StreamRows
 				TopUpRows();
 			}
 		}
-		// a row the light cap held back: tried again only once a row has let its lights go, or once a switch change woke it - never every
-		// frame while the cap stays full; let go when its projectile ends
-		if (gParked.KeepsAwake() && (roomFreed || switchesMoved)) {
+		// a row the light cap held back: tried again only once a row has let its lights go, a switch change woke it or its lights could
+		// not be made - never every frame while the cap stays full; let go when its projectile ends
+		if (gParked.KeepsAwake() && (roomFreed || switchesMoved || makeFailed)) {
 			bool room = false;
 			{
 				std::lock_guard l{ gLiveLock };

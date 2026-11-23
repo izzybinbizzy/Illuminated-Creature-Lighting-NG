@@ -3,7 +3,7 @@
 // GPL-3.0-or-later; see LICENSE.
 //
 // A projectile whose row of lights could not hang waits here while it flies. Held back by the light cap, it is tried again only once a
-// row has let its lights go (the host's room-freed signal), never every frame. Held back by its switch, it is tried again only when the
+// row has let its lights go (the host's room-freed signal) or its lights failed to be made. Held back by its switch, it is tried again only when the
 // host's switches move (Wake), so a row switched off never keeps a per-frame pass awake. Game-free: RowParkChecks.h runs it.
 #pragma once
 

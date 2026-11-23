@@ -634,6 +634,10 @@ namespace Plugin
 		FindFileRows();
 		for (const auto& t : gTargets) {
 			gOurLights.insert(t.ours);
+			// a record with an RE::Light file points back at its own light: a switched-off caster's light from it goes out too
+			if (t.inFiles && t.own) {
+				gOurLights.insert(t.own);
+			}
 		}
 		if (!gTargets.empty()) {
 			InstallRecordHooks();
@@ -717,6 +721,17 @@ namespace Plugin
 	std::size_t SpellRecordCount()
 	{
 		return gTargets.size();
+	}
+
+	std::vector<std::string> SpellRecordsOurs()
+	{
+		std::vector<std::string> out;
+		for (const auto& t : gTargets) {
+			if (t.record && t.slot && *t.slot == t.ours) {
+				out.push_back(std::format("{:08X}", t.record->GetFormID()));
+			}
+		}
+		return out;
 	}
 
 	bool AnyCreatureOff()

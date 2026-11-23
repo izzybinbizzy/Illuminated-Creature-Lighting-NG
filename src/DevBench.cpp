@@ -103,7 +103,7 @@ namespace Plugin
 		{
 			auto now = DevBenchGlue::OnMainThread([]() {
 				return json{ { "lighting", LightingName(LightingFound()) }, { "inverseSquare", InverseSquare() }, { "settings", SettingsJson(SettingsNow()) },
-					{ "creatureFiles", FilesRead() }, { "creatureRows", CreatureRowCount() }, { "creatureList", CreatureListJson() }, { "spellRecordsLit", SpellRecordCount() }, { "switchedOffSpells", SwitchCullsJson() },
+					{ "creatureFiles", FilesRead() }, { "creatureRows", CreatureRowCount() }, { "creatureList", CreatureListJson() }, { "spellRecordsLit", SpellRecordCount() }, { "spellRecordsOurs", SpellRecordsOurs() }, { "switchedOffSpells", SwitchCullsJson() },
 					{ "otherMods", OthersJson() }, { "eyesMod", EyesModLoaded() }, { "blankGlowArt", BlankGlowArt() }, { "lit", LitReport() },
 					{ "loadEvents", { { "litAbilities", LitAbilitiesNoted() }, { "hungAgain", LightsHungAgain() }, { "castLightsOut", CastLightsPutOut() } } }, { "artLit", ArtLitCount() }, { "impactLit", ImpactLitCount() }, { "objectsLit", ObjectLitCount() },
 					{ "impactSeen", { { "particles", ImpactSeen().first }, { "lastRecord", std::format("{:08X}", ImpactSeen().second) }, { "models", ImpactModelsSeen() } } },

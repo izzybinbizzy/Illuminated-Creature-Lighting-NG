@@ -64,6 +64,7 @@ namespace Plugin
 		Anima::gTuning = Anima::TuningOf(r.values);
 		SKSE::log::info("advanced settings: {} value(s) of {} read in {}{}", r.read, Anima::kAdvancedKnobs.size(), folder.string(),
 			wrote ? "; the file was missing a value and was written whole" : "");
+		SKSE::log::info("advanced settings: {}", AdvancedSettings::Changed(Anima::kAdvancedKnobs, r.values));
 	}
 
 	// written beside the file and moved over it: a crash or a full disk mid-write leaves the old file, never half of one

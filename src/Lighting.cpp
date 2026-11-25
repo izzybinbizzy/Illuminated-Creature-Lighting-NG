@@ -11,6 +11,9 @@
 
 #include "GameLighting.h"
 
+#include <filesystem>
+#include <system_error>
+
 namespace Plugin
 {
 	static_assert(static_cast<int>(Lighting::kShaders) == static_cast<int>(GameLighting::Lighting::kShaders) &&
@@ -55,6 +58,19 @@ namespace Plugin
 	bool LightLimitFix()
 	{
 		return gLightLimitFix.load();
+	}
+
+	// the optional Bottled Shaders Shadows download is only this marker file (his checklist 761): with it a creature's body glow casts a
+	// shadow (CreatureLights.cpp). Open Shaders' Promote makes every light a caster by itself. RELight's HandLights.cpp ShadowPatch way
+	bool ShadowPatch()
+	{
+		static const bool on = [] {
+			std::error_code ec;
+			const bool      there = std::filesystem::exists("Data/SKSE/Plugins/IlluminatedCreatureLightingNG/Bottled Shaders Shadows.ini", ec);
+			SKSE::log::info("shadows: the Bottled Shaders Shadows download is {}", there ? "installed - body glows cast shadows" : "not installed");
+			return there;
+		}();
+		return on;
 	}
 
 	float RowStrength(const Anima::Row& a_row, const Anima::Settings& a_s)

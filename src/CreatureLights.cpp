@@ -21,6 +21,8 @@
 #include "Plugin.h"
 #include "Po3Tweaks.h"
 
+#include <utility>
+
 namespace Plugin
 {
 	namespace
@@ -591,6 +593,7 @@ namespace Plugin
 					// dead before we saw it: only an ember is left
 					strength *= Anima::DeathShare(Anima::gTuning.deathFadeSeconds, a_s.deathFade, row.ember);
 				}
+				bool caster = row.kind == Anima::Kind::kGlow && ShadowPatch();
 				for (const auto& p : Anima::SpotsOn(row, bone != nullptr)) {
 					auto* light = node ? LightKit::CloneLight() : nullptr;
 					if (!light) {
@@ -600,8 +603,9 @@ namespace Plugin
 					light->local.translate = { p.x, p.y, p.z };
 					light->GetLightRuntimeData().radius.x = -1.0f;  // the clone's own may equal ours: Dress attenuates it at once
 					Dress(light, row, strength, a_s, PickedColor(i));
-					// not portal strict: a creature's glow goes through doorways with it
-					RE::NiPointer<RE::BSLight> bs(LightKit::Hang(node, light, scene, 1.0f, false));
+					// not portal strict: a creature's glow goes through doorways with it; with the Bottled Shaders Shadows
+					// download its body glow's first spot casts the shadow (one caster per row, Bottled has few slots)
+					RE::NiPointer<RE::BSLight> bs(LightKit::Hang(node, light, scene, 1.0f, false, std::exchange(caster, false)));
 					if (!bs) {
 						continue;
 					}
@@ -1205,11 +1209,37 @@ namespace Plugin
 			static RE::NiAVObject* thunk(RE::Character* a_this, bool a_background)
 			{
 				auto* node = func(a_this, a_background);
-				if (node && CouldLight(a_this)) {
+				// a queued load's body is noted at its store on the main thread where that call is hooked (Store3DSite): nothing here then
+				if (node && !(a_background && gStoreHooked.load(std::memory_order_relaxed)) && CouldLight(a_this)) {
 					const auto id = a_this->GetFormID();
 					Note([id, node]() { gNoted.loaded.push_back({ id, true, RE::NiPointer<RE::NiAVObject>(node) }); });
 				}
 				return node;
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		// the store task (13005) hands a queued load's body to TESObjectREFR::Store3D (19730) on the main thread: the arrival is noted there,
+		// after the game's own call, so no loader thread takes a lock or allocates for us (the reload crash's methods audit, 720). Its return
+		// is unused at the site (read in the exe: the task reloads rdx right after the call)
+		struct Store3DSite
+		{
+			static void thunk(RE::TESObjectREFR* a_ref, RE::NiAVObject* a_node)
+			{
+				func(a_ref, a_node);
+				if (!a_ref || !a_node) {
+					return;
+				}
+				Guarded("a body stored", [a_ref, a_node]() {
+					if (auto* actor = a_ref->As<RE::Character>()) {
+						if (CouldLight(actor)) {
+							const auto id = actor->GetFormID();
+							Note([id, a_node]() { gNoted.loaded.push_back({ id, true, RE::NiPointer<RE::NiAVObject>(a_node) }); });
+						}
+						return;
+					}
+					NoteObjectStored(a_ref, a_node);
+				});
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -1629,6 +1659,33 @@ namespace Plugin
 			ImpactFree::func = particle.write_vfunc(0x00, ImpactFree::thunk);
 			SKSE::log::info("impact rows: a splash is lit at the call that sets its copy up (+0x{:X} in the exe)", site - REL::Module::get().base());
 		}
+
+		// the store task's call into Store3D (AE: 13005 +0x24 -> 19730, the Signatures rows); SE's ids are not read here and VR takes no
+		// trampoline, so both keep noting a queued load at Load3D
+		void InstallStoreSite()
+		{
+			if (!REL::Module::IsAE()) {
+				SKSE::log::info("bodies: noted at Load3D (the store call is read for AE only)");
+				return;
+			}
+			auto&        trampoline = SKSE::GetTrampoline();
+			const auto   site = REL::Relocation<std::uintptr_t>{ REL::ID(13005) }.address() + 0x24;
+			const auto   store = REL::Relocation<std::uintptr_t>{ REL::ID(19730) }.address();
+			std::int32_t rel = 0;
+			const bool   call = LightKit::IsCallAt(site);
+			if (call) {
+				std::memcpy(&rel, reinterpret_cast<const void*>(site + 1), sizeof(rel));
+			}
+			if (!call || site + 5 + static_cast<std::intptr_t>(rel) != store || trampoline.free_size() < kStoreSiteBytes) {
+				SKSE::log::warn(
+					"bodies: the store task's call into Store3D was not found (another shape, or another plugin changed it) or the "
+					"trampoline is full; a queued load is noted at Load3D");
+				return;
+			}
+			Store3DSite::func = trampoline.write_call<5>(site, Store3DSite::thunk);
+			gStoreHooked = true;
+			SKSE::log::info("bodies: a queued load is noted at its store on the main thread (+0x{:X} in the exe)", site - REL::Module::get().base());
+		}
 	}
 
 	void InstallLights()
@@ -1650,6 +1707,7 @@ namespace Plugin
 		REL::Relocation<std::uintptr_t> vtbl{ RE::Character::VTABLE[0] };
 		Load3D::func = vtbl.write_vfunc(0x6A, Load3D::thunk);
 		Set3D::func = vtbl.write_vfunc(0x6C, Set3D::thunk);
+		InstallStoreSite();
 		// after Light Placer's own hook of this slot (its hooks go in at plugin load, ours at data load), so its lights are there; none with no file to answer
 		gWatchTheirArt = OthersLightBodies();
 		REL::Relocation<std::uintptr_t> art{ RE::ModelReferenceEffect::VTABLE[0] };

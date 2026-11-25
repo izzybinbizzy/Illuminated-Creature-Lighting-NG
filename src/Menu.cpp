@@ -123,7 +123,7 @@ namespace Plugin
 				for (std::size_t i = 0; i < Anima::kOthers; ++i) {
 					if (!AlsoLitBy(i).empty() && s.theirs[i]) {
 						PushStyleColor(ImGuiCol_Text, MenuStyle::kBad);
-						TextWrapped("%s", T("Warning: another mod's lights replace mine on some creatures. See Other Mods' Lights below."));
+						TextWrapped("%s", T("Warning: another mod's lights replace this mod's lights on some creatures. See Other Mods' Lights below."));
 						PopStyleColor();
 						break;
 					}
@@ -131,7 +131,7 @@ namespace Plugin
 			}
 
 			Header(Icon::kBulb, T("Lights"));
-			Field(T("Creature lights"), &Anima::Settings::on, T("Turns all of my lights on or off."));
+			Field(T("Creature lights"), &Anima::Settings::on, T("Turns all creature lights on or off."));
 			constexpr std::array<std::array<const char*, 2>, Anima::kKinds> kKinds{ {
 				{ TR_MARK("Creature glow"), TR_MARK("Atronachs, wisps, spriggans, ice wraiths and other glowing creatures.") },
 				{ TR_MARK("Spells creatures use"), TR_MARK("Breaths, casting glow, swarms and other attacks creatures throw.") },
@@ -147,7 +147,7 @@ namespace Plugin
 				}
 			}
 			if (EyesModLoaded()) {
-				MenuStyle::Note(T("JS Emissive Eyes handles the eyes while it's installed, so my glowing eyes stay off."));
+				MenuStyle::Note(T("JS Emissive Eyes handles the eyes while it's installed, so the glowing eyes here stay off."));
 			}
 			// shown only when a replacer emptied the draugr eye art these lights stand for
 			if (BlankGlowArt()) {
@@ -222,22 +222,22 @@ namespace Plugin
 					}
 					if (s.theirs[i]) {
 						PushStyleColor(ImGuiCol_Text, MenuStyle::kBad);
-						TextWrapped("%s", Translation::Fill(T("Warning: {} is lighting these creatures instead of me: {}."),
+						TextWrapped("%s", Translation::Fill(T("Warning: {} is lighting these creatures instead of this mod: {}."),
 											  Anima::kOtherMods[i].name, list)
 											  .c_str());
 						PopStyleColor();
 					} else {
-						MenuStyle::Note(Translation::Fill(T("My lights replace {}'s on these creatures: {}."), Anima::kOtherMods[i].name, list).c_str());
+						MenuStyle::Note(Translation::Fill(T("This mod's lights replace {}'s on these creatures: {}."), Anima::kOtherMods[i].name, list).c_str());
 					}
 				}
-				TextWrapped("%s", T("When another mod lights one of these creatures, my light replaces it. Tick a mod below to give its creatures "
-									"back to it, and my lights turn off on them."));
+				TextWrapped("%s", T("When another mod lights one of these creatures, this mod's light replaces it. Tick a mod below to give its "
+									"creatures back to it and turn this mod's lights off on them."));
 				for (std::size_t i = 0; i < Anima::kOthers; ++i) {
 					if (!found[i]) {
 						continue;
 					}
 					bool v = s.theirs[i];
-					if (Switch(std::string(Anima::kOtherMods[i].name).c_str(), v, T("Ticked: that mod lights its creatures, and my lights turn off on them."))) {
+					if (Switch(std::string(Anima::kOtherMods[i].name).c_str(), v, T("Ticked: that mod lights its creatures, and this mod's lights turn off on them."))) {
 						UpdateSettings([&](Anima::Settings& a_s) { a_s.theirs[i] = v; });
 						Changed();
 					}

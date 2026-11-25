@@ -112,13 +112,22 @@ namespace
 
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
-	// the trampoline holds the Floor Light Fix's two call hooks, the six spell-light call sites (SpellLights.cpp) and a splash's copy call
-	// (CreatureLights.cpp); none on VR, where none is installed
+	// the trampoline holds the six spell-light call sites (SpellLights.cpp; the casting art's is AE only), a splash's copy call and the
+	// store call (CreatureLights.cpp; the store is AE only) and the Floor Light Fix's two (Skyrim 1.6.1170 only); none on VR, where none
+	// is installed - each game asks for what it writes
 	SKSE::InitInfo info{};
-	info.trampoline = !REL::Module::IsVR();
 	using Plugin::kImpactSiteBytes;
 	using Plugin::kSpellSiteBytes;
-	info.trampolineSize = FloorLightFix::kTrampolineBytes + kSpellSiteBytes + kImpactSiteBytes;
+	using Plugin::kStoreSiteBytes;
+	constexpr std::size_t kAeOnlySpellSiteBytes = 14;
+	const bool            vr = REL::Module::IsVR();
+	const bool            ae = REL::Module::IsAE();
+	const bool            ae1170 = ae && REL::Module::get().version() == REL::Version{ 1, 6, 1170, 0 };
+	info.trampoline = !vr;
+	info.trampolineSize = vr     ? 0 :
+	                      ae1170 ? FloorLightFix::kTrampolineBytes + kSpellSiteBytes + kImpactSiteBytes + kStoreSiteBytes :
+	                      ae     ? kSpellSiteBytes + kImpactSiteBytes + kStoreSiteBytes :
+	                               kSpellSiteBytes - kAeOnlySpellSiteBytes + kImpactSiteBytes;
 	SKSE::Init(a_skse, info);
 	// the wrong game: loaded but idle - a false here makes SKSE add its own "exit game?" box over the guard's
 	if (!RuntimeGuard::RightGame("Illuminated - Creature Lighting NG", "Illuminated - Creature Lighting NG", "Illuminated - Creature Lighting NG - VR")) {

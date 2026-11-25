@@ -125,8 +125,8 @@ namespace Plugin
 	inline constexpr std::size_t kSpellSiteBytes = 6 * 14;
 	// the call that sets a splash's copy up (CreatureLights.cpp InstallImpactCopied), one 5-byte call
 	inline constexpr std::size_t kImpactSiteBytes = 14;
-	// the store task's call into TESObjectREFR::Store3D (CreatureLights.cpp InstallStoreSite, AE), one 5-byte call
-	inline constexpr std::size_t kStoreSiteBytes = 14;
+	// the two calls into TESObjectREFR::Store3D a queued load is finished by (CreatureLights.cpp InstallStoreSite, AE), two 5-byte calls
+	inline constexpr std::size_t kStoreSiteBytes = 2 * 14;
 	// set once at data load when that call is hooked: a queued load's body is then noted on the main thread at its store, and the two
 	// Load3D hooks note nothing on a loader thread
 	inline std::atomic<bool> gStoreHooked{ false };

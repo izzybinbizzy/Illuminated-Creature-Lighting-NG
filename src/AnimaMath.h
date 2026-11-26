@@ -516,8 +516,9 @@ namespace Anima
 	inline constexpr std::size_t             kOtherUnnamed = kOthers - 1;
 	using Lighters = std::array<bool, kOthers>;
 
-	// one light of another mod's Light Placer entry, as Light Placer filters it (ConfigData.cpp IsInvalid): never the forms its blackList
-	// names, and only the forms its whiteList names when that list resolved to any (an empty or all-missing whiteList filters nothing)
+	// one light of another mod's Light Placer entry, as Light Placer 5.2.0 filters it (ConfigData.cpp Filter::PostProcess / IsInvalid):
+	// never the forms its blackList names, and only the forms its whiteList names; an empty whiteList filters nothing, and one whose
+	// every form is missing drops the light, so it reaches nothing (our powerof3/LightPlacer#34)
 	struct LightFilter
 	{
 		bool                       hasOnly{ false };
@@ -525,11 +526,12 @@ namespace Anima
 		std::vector<std::uint32_t> never;
 	};
 
-	// a light's filter from the forms its two lists resolved to: a whiteList counts only when it resolved to any form
-	[[nodiscard]] inline LightFilter MakeFilter(std::vector<std::uint32_t> a_only, std::vector<std::uint32_t> a_never)
+	// a light's filter from the forms its two lists resolved to; a_whiteNamed: its whiteList named any form, so one that resolved to none
+	// reaches nothing
+	[[nodiscard]] inline LightFilter MakeFilter(std::vector<std::uint32_t> a_only, std::vector<std::uint32_t> a_never, bool a_whiteNamed = false)
 	{
 		LightFilter f;
-		f.hasOnly = !a_only.empty();
+		f.hasOnly = a_whiteNamed || !a_only.empty();
 		f.only = std::move(a_only);
 		f.never = std::move(a_never);
 		return f;

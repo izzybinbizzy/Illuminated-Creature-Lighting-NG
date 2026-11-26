@@ -31,8 +31,9 @@ SKSE Menu Framework > Illuminated - Creature Lighting NG, saved to `Data\SKSE\Pl
 ## Building
 
 `build.bat` (git, xmake 3 and the Visual Studio C++ tools): CommonLib at the pinned commit, the DLL, then the off-game tests
-(`tests/testanima.cpp`, the game-free part in `src/AnimaMath.h`). For Skyrim VR: `git -C lib\commonlibsse-ng submodule update --init
-extern/openvr`, then `build.bat` with `GLOW_VR=1` set (a VR-only build).
+(`tests/testanima.cpp`, the game-free part in `src/AnimaMath.h`). For Skyrim VR: run `build.bat` once first (it fetches CommonLib
+into `lib\commonlibsse-ng` at the pinned commit), then `git -C lib\commonlibsse-ng submodule update --init extern/openvr`, then
+`build.bat` with `GLOW_VR=1` set (a VR-only build).
 
 ## Credits
 

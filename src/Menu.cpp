@@ -315,13 +315,14 @@ namespace Plugin
 
 	void RegisterMenu()
 	{
-		if (!SKSEMenuFramework::IsInstalled()) {
-			SKSE::log::warn("SKSE Menu Framework is not installed, so there is no settings page; the settings file still applies");
+		// its file on the drive is not enough: a framework that did not load takes every page and shows none
+		if (!SKSEMenuFramework::IsInstalled() || !GetMenuFrameworkModule()) {
+			SKSE::log::warn("SKSE Menu Framework is not installed or did not load, so there is no settings page; the settings file still applies");
 			return;
 		}
 		MenuStyle::gTheme = MenuStyle::MakeTheme(0x6FE3B4);
-		SKSEMenuFramework::SetSection(T("Illuminated - Creature Lighting NG"));
-		SKSEMenuFramework::AddSectionItem(T("Settings"), LightKit::GuardedDraw<RenderSettings>);
+		SKSEMenuFramework::SetSection(Translation::MenuName("Illuminated - Creature Lighting NG"));
+		SKSEMenuFramework::AddSectionItem(Translation::MenuName("Settings"), LightKit::GuardedDraw<RenderSettings>);
 		gTestWindow = SKSEMenuFramework::AddWindow(DrawTestWindow, false);
 		SKSE::log::info("settings page added to SKSE Menu Framework {}", SKSEMenuFramework::GetMenuFrameworkVersion());
 	}

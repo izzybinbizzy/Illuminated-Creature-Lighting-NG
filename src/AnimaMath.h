@@ -970,8 +970,8 @@ namespace Anima
 
 	// in Tuning's order; ranges a player can use safely (an ease under 10 s stays inside the flicker's 12 s loop, NoticeKeys)
 	inline constexpr std::array<AdvancedSettings::Knob, 12> kAdvancedKnobs{ {
-		{ "Performance", "LitCreatures", "How many creatures nearest you are lit at once on Community Shaders.", 16.0f, 1.0f, 32.0f, true, true },
-		{ "Performance", "LitCreaturesENBVanilla", "How many creatures nearest you are lit at once on ENB and Vanilla.", 5.0f, 1.0f, 16.0f, true, false },
+		{ "Performance", "LitCreatures", "How many creatures nearest the player are lit at once on Community Shaders.", 16.0f, 1.0f, 32.0f, true, true },
+		{ "Performance", "LitCreaturesENBVanilla", "How many creatures nearest the player are lit at once on ENB and Vanilla.", 5.0f, 1.0f, 16.0f, true, false },
 		{ "Performance", "LitObjects", "How many torchbugs, jars of bugs and other glowing objects are lit at once on Community Shaders (no limit with RE::Light).", 8.0f, 0.0f,
 			16.0f, true, false },
 		{ "Performance", "LitObjectsENBVanilla", "How many glowing objects are lit at once on ENB and Vanilla (no limit with RE::Light).", 2.0f, 0.0f, 8.0f, true, false },
@@ -981,9 +981,9 @@ namespace Anima
 		{ "Glow when casting", "SurgeSeconds", "How many seconds the glow when casting lasts.", 0.6f, 0.3f, 3.0f, false, false },
 		{ "Glow when casting", "SurgeLift", "How much brighter a creature glows at the peak of a cast: 0.6 is 60 percent brighter.", 0.6f, 0.0f, 2.0f,
 			false, false },
-		{ "Dark until noticed", "SearchingShare", "How bright a creature glows while it searches for you, as a share of its full glow.", 0.5f,
+		{ "Dark until noticed", "SearchingShare", "How bright a creature glows while it searches for the player, as a share of its full glow.", 0.5f,
 			0.0f, 1.0f, false, false },
-		{ "Dark until noticed", "FadeUpSeconds", "How many seconds a creature's light takes to fade up when it notices you.", 1.5f, 0.2f, 10.0f,
+		{ "Dark until noticed", "FadeUpSeconds", "How many seconds a creature's light takes to fade up when it notices the player.", 1.5f, 0.2f, 10.0f,
 			false, true },
 		{ "Dark until noticed", "FadeDownSeconds", "How many seconds a creature's light takes to fade down when it calms.", 3.0f, 0.2f, 10.0f,
 			false, false },

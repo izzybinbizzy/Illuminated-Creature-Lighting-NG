@@ -40,6 +40,7 @@ namespace Plugin
 	[[nodiscard]] const char* LightingName(Lighting a_lighting);
 	[[nodiscard]] bool        InverseSquare();
 	[[nodiscard]] bool        LightLimitFix();
+	[[nodiscard]] bool        ShadowPatch();  // the Bottled Shaders Shadows download's marker: body glows cast shadows (Lighting.cpp)
 	// a row's strength under the Brightness slider, with the Vanilla share of the mods its numbers came from (Anima::TheirVanillaShare)
 	[[nodiscard]] float RowStrength(const Anima::Row& a_row, const Anima::Settings& a_s);
 
@@ -124,6 +125,13 @@ namespace Plugin
 	inline constexpr std::size_t kSpellSiteBytes = 6 * 14;
 	// the call that sets a splash's copy up (CreatureLights.cpp InstallImpactCopied), one 5-byte call
 	inline constexpr std::size_t kImpactSiteBytes = 14;
+	// the two calls into TESObjectREFR::Store3D a queued load is finished by (CreatureLights.cpp InstallStoreSite, AE), two 5-byte calls
+	inline constexpr std::size_t kStoreSiteBytes = 2 * 14;
+	// set once at data load when that call is hooked: a queued load's body is then noted on the main thread at its store, and the two
+	// Load3D hooks note nothing on a loader thread
+	inline std::atomic<bool> gStoreHooked{ false };
+	// a placed object's 3D stored by the game's store task (main thread): the object route notes it (ObjectLights.cpp)
+	void NoteObjectStored(RE::TESObjectREFR* a_ref, RE::NiAVObject* a_node) noexcept;
 	// the row that lights this art object (a row's art= line: a hit art, an enchantment's art); fixed after data load, any thread
 	[[nodiscard]] std::optional<std::size_t> ArtRow(const RE::BGSArtObject* a_art);
 	[[nodiscard]] bool                       AnyArtRows();

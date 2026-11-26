@@ -115,7 +115,7 @@ namespace Plugin
 			Header(Icon::kBulb, T("Illuminated - Creature Lighting NG"));
 			TextWrapped("%s", T("Creatures give off light: atronachs, wisps, spriggans, ice wraiths, ash spawn, chaurus, familiars and more, on "
 								"Community Shaders, ENB and Vanilla."));
-			MenuStyle::Note(Translation::Fill(T("Lighting found: {}. Creatures lit near you: {}."), LightingName(LightingFound()),
+			MenuStyle::Note(Translation::Fill(T("Lighting found: {}. Creatures lit nearby: {}."), LightingName(LightingFound()),
 				std::to_string(LitCount()))
 					.c_str());
 			{
@@ -123,7 +123,7 @@ namespace Plugin
 				for (std::size_t i = 0; i < Anima::kOthers; ++i) {
 					if (!AlsoLitBy(i).empty() && s.theirs[i]) {
 						PushStyleColor(ImGuiCol_Text, MenuStyle::kBad);
-						TextWrapped("%s", T("Warning: another mod's lights replace mine on some creatures. See Other Mods' Lights below."));
+						TextWrapped("%s", T("Warning: another mod's lights replace this mod's lights on some creatures. See Other Mods' Lights below."));
 						PopStyleColor();
 						break;
 					}
@@ -131,7 +131,7 @@ namespace Plugin
 			}
 
 			Header(Icon::kBulb, T("Lights"));
-			Field(T("Creature lights"), &Anima::Settings::on, T("Turns all of my lights on or off."));
+			Field(T("Creature lights"), &Anima::Settings::on, T("Turns all of this mod's creature lights on or off; off gives other mods' lights back."));
 			constexpr std::array<std::array<const char*, 2>, Anima::kKinds> kKinds{ {
 				{ TR_MARK("Creature glow"), TR_MARK("Atronachs, wisps, spriggans, ice wraiths and other glowing creatures.") },
 				{ TR_MARK("Spells creatures use"), TR_MARK("Breaths, casting glow, swarms and other attacks creatures throw.") },
@@ -147,7 +147,7 @@ namespace Plugin
 				}
 			}
 			if (EyesModLoaded()) {
-				MenuStyle::Note(T("JS Emissive Eyes handles the eyes while it's installed, so my glowing eyes stay off."));
+				MenuStyle::Note(T("JS Emissive Eyes handles the eyes while it's installed, so the glowing eyes here stay off."));
 			}
 			// shown only when a replacer emptied the draugr eye art these lights stand for
 			if (BlankGlowArt()) {
@@ -174,14 +174,14 @@ namespace Plugin
 			Percent(T("Reach"), &Anima::Settings::reach, Anima::kReachMin, Anima::kReachMax, T("How far all creature lights reach."));
 
 			if (const char* owner = PickerOwner()) {
-				MenuStyle::Note(Translation::Fill(T("You can pick a color for each creature on {}'s Choose Your Own Color page."), owner).c_str());
+				MenuStyle::Note(Translation::Fill(T("Each creature's color can be picked on {}'s Choose Your Own Color page."), owner).c_str());
 			}
 
 			Header(Icon::kBulb, T("Movement"));
 			Field(T("Flicker and pulse"), &Anima::Settings::flicker, T("Flame creatures flicker, storm creatures crackle, and wisps and spirits breathe."));
 			Field(T("Fade on death"), &Anima::Settings::deathFade, T("A dying creature's light fades over a few seconds, leaving an ember on flame creatures."));
 			Field(T("Glow when casting"), &Anima::Settings::surge, T("A creature's light brightens briefly while it casts or breathes."));
-			Field(T("Dark until noticed"), &Anima::Settings::noticed, T("A creature stays dark until it notices you, then its light fades up (off by default)."));
+			Field(T("Dark until noticed"), &Anima::Settings::noticed, T("A creature stays dark until it notices the player, then its light fades up (off by default)."));
 
 			// one dropdown, a sub-dropdown per creatures file, a checkbox beside each creature
 			if (const auto& list = CreatureList(); !list.empty()) {
@@ -222,22 +222,22 @@ namespace Plugin
 					}
 					if (s.theirs[i]) {
 						PushStyleColor(ImGuiCol_Text, MenuStyle::kBad);
-						TextWrapped("%s", Translation::Fill(T("Warning: {} is lighting these creatures instead of me: {}."),
+						TextWrapped("%s", Translation::Fill(T("Warning: {} is lighting these creatures instead of this mod: {}."),
 											  Anima::kOtherMods[i].name, list)
 											  .c_str());
 						PopStyleColor();
 					} else {
-						MenuStyle::Note(Translation::Fill(T("My lights replace {}'s on these creatures: {}."), Anima::kOtherMods[i].name, list).c_str());
+						MenuStyle::Note(Translation::Fill(T("This mod's lights replace {}'s on these creatures: {}."), Anima::kOtherMods[i].name, list).c_str());
 					}
 				}
-				TextWrapped("%s", T("When another mod lights one of these creatures, my light replaces it. Tick a mod below to give its creatures "
-									"back to it, and my lights turn off on them."));
+				TextWrapped("%s", T("When another mod lights one of these creatures, this mod's light replaces it. Tick a mod below to give its "
+									"creatures back to it and turn this mod's lights off on those creatures."));
 				for (std::size_t i = 0; i < Anima::kOthers; ++i) {
 					if (!found[i]) {
 						continue;
 					}
 					bool v = s.theirs[i];
-					if (Switch(std::string(Anima::kOtherMods[i].name).c_str(), v, T("Ticked: that mod lights its creatures, and my lights turn off on them."))) {
+					if (Switch(std::string(Anima::kOtherMods[i].name).c_str(), v, T("Ticked: that mod lights its creatures, and this mod's lights turn off on those creatures."))) {
 						UpdateSettings([&](Anima::Settings& a_s) { a_s.theirs[i] = v; });
 						Changed();
 					}
@@ -247,7 +247,7 @@ namespace Plugin
 			// one dropdown per patch (Anima::kPicks, in that order), off by default: each changes the game's own creatures, so only a player
 			// with that mod picks it. The creatures files are read at game start, so a pick takes effect then
 			Header(Icon::kBulb, T("Patches for Other Mods"));
-			MenuStyle::Note(T("Pick only the patches for mods you use. A change takes effect the next time the game starts."));
+			MenuStyle::Note(T("Pick only the patches for mods in the load order. A change takes effect the next time the game starts."));
 			{
 				struct PickText
 				{
@@ -260,7 +260,7 @@ namespace Plugin
 					{ TR_MARK("PsBoss - New Dwarven Centurion Female"), TR_MARK("Adds a light for the glowing core on her chest."), { TR_MARK("Off"), TR_MARK("On"), nullptr } },
 					{ TR_MARK("PsBoss - New Spriggan Matron"), TR_MARK("Adds lights for her glowing eyes."), { TR_MARK("Off"), TR_MARK("On"), nullptr } },
 					{ TR_MARK("PsBoss - New Burnt Spriggan Female"), TR_MARK("Adds lights for her glowing eyes."), { TR_MARK("Off"), TR_MARK("On"), nullptr } },
-					{ TR_MARK("PsBoss - New Storm Atronach Female"), TR_MARK("Version 1 is lit right with this off. Pick the version you use."), { TR_MARK("Off or version 1"), TR_MARK("Version 2 (violet)"), TR_MARK("Version 3 (green)") } },
+					{ TR_MARK("PsBoss - New Storm Atronach Female"), TR_MARK("Version 1 is lit right with this off. Pick the version installed."), { TR_MARK("Off or version 1"), TR_MARK("Version 2 (violet)"), TR_MARK("Version 3 (green)") } },
 					{ TR_MARK("PsBoss - New Spriggans"), TR_MARK("Versions 1 and 3 are lit right with this off. Version 2 turns their light orange."), { TR_MARK("Off, version 1 or 3"), TR_MARK("Version 2 (orange)"), nullptr } },
 					{ TR_MARK("PsBoss - New Female Draugr, Remove Eye Glow"), TR_MARK("Female draugr go dark like their eyes when that option is used."), { TR_MARK("Off"), TR_MARK("On"), nullptr } },
 					{ TR_MARK("Dwemer Automatons Glowmapped"), TR_MARK("Dwarven machines take that mod's orange glow."), { TR_MARK("Off"), TR_MARK("On"), nullptr } },
@@ -315,13 +315,14 @@ namespace Plugin
 
 	void RegisterMenu()
 	{
-		if (!SKSEMenuFramework::IsInstalled()) {
-			SKSE::log::warn("SKSE Menu Framework is not installed, so there is no settings page; the settings file still applies");
+		// its file on the drive is not enough: a framework that did not load takes every page and shows none
+		if (!SKSEMenuFramework::IsInstalled() || !GetMenuFrameworkModule()) {
+			SKSE::log::warn("SKSE Menu Framework is not installed or did not load, so there is no settings page; the settings file still applies");
 			return;
 		}
 		MenuStyle::gTheme = MenuStyle::MakeTheme(0x6FE3B4);
-		SKSEMenuFramework::SetSection(T("Illuminated - Creature Lighting NG"));
-		SKSEMenuFramework::AddSectionItem(T("Settings"), LightKit::GuardedDraw<RenderSettings>);
+		SKSEMenuFramework::SetSection(Translation::MenuName("Illuminated - Creature Lighting NG"));
+		SKSEMenuFramework::AddSectionItem(Translation::MenuName("Settings"), LightKit::GuardedDraw<RenderSettings>);
 		gTestWindow = SKSEMenuFramework::AddWindow(DrawTestWindow, false);
 		SKSE::log::info("settings page added to SKSE Menu Framework {}", SKSEMenuFramework::GetMenuFrameworkVersion());
 	}

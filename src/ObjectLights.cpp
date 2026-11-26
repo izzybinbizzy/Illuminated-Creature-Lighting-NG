@@ -259,7 +259,9 @@ namespace Plugin
 			static RE::NiAVObject* thunk(RE::TESObjectREFR* a_this, bool a_background)
 			{
 				auto* node = func(a_this, a_background);
-				if (node && gArmed.load(std::memory_order_relaxed) && RowOfBase(a_this->GetBaseObject())) {
+				// a queued load is noted at its store on the main thread where that call is hooked (CreatureLights.cpp Store3DSite)
+				if (node && !(a_background && gStoreHooked.load(std::memory_order_relaxed)) && gArmed.load(std::memory_order_relaxed) &&
+					RowOfBase(a_this->GetBaseObject())) {
 					Note(a_this->GetFormID(), true, node);
 				}
 				return node;
@@ -366,6 +368,13 @@ namespace Plugin
 		Load3D::func = vtbl.write_vfunc(0x6A, Load3D::thunk);
 		Set3D::func = vtbl.write_vfunc(0x6C, Set3D::thunk);
 		gArmed = true;
+	}
+
+	void NoteObjectStored(RE::TESObjectREFR* a_ref, RE::NiAVObject* a_node) noexcept
+	{
+		if (gArmed.load(std::memory_order_relaxed) && RowOfBase(a_ref->GetBaseObject())) {
+			Note(a_ref->GetFormID(), true, a_node);
+		}
 	}
 
 	void DropObjectLights()

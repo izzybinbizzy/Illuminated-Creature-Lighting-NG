@@ -381,15 +381,16 @@ namespace Plugin
 				gRows.size(), races, gByModel.size(), gBySkin.size(), gRowSkins.size());
 		}
 
-		// one list of a Light Placer light ("0x<id>~<plugin>" or an editor ID, Light Placer's way) as the forms of this load order it names
-		[[nodiscard]] std::vector<std::uint32_t> FormsNamed(const nlohmann::json& a_light, const char* a_key, bool& a_has)
+		// one list of a Light Placer light ("0x<id>~<plugin>" or an editor ID, Light Placer's way) as the forms of this load order it names;
+		// a_named: the list names any form at all, found or not
+		[[nodiscard]] std::vector<std::uint32_t> FormsNamed(const nlohmann::json& a_light, const char* a_key, bool& a_named)
 		{
 			std::vector<std::uint32_t> out;
 			const auto                 list = a_light.find(a_key);
 			if (list == a_light.end() || !list->is_array()) {
 				return out;
 			}
-			a_has = true;
+			a_named = !list->empty();
 			for (const auto& key : *list) {
 				if (const auto* form = key.is_string() ? FormOfKey(key.get<std::string>()) : nullptr) {
 					out.push_back(form->GetFormID());
@@ -412,7 +413,9 @@ namespace Plugin
 				}
 				bool white = false;
 				bool black = false;
-				out.push_back(Anima::MakeFilter(FormsNamed(light, "whiteList", white), FormsNamed(light, "blackList", black)));
+				auto only = FormsNamed(light, "whiteList", white);
+				auto never = FormsNamed(light, "blackList", black);
+				out.push_back(Anima::MakeFilter(std::move(only), std::move(never), white));
 			}
 			return out.empty() ? std::vector<Anima::LightFilter>{ Anima::LightFilter{} } : out;
 		}

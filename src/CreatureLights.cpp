@@ -21,6 +21,8 @@
 #include "Plugin.h"
 #include "Po3Tweaks.h"
 
+#include <utility>
+
 namespace Plugin
 {
 	namespace
@@ -582,6 +584,8 @@ namespace Plugin
 			lit.seed = id * 2654435761u;
 			lit.dying = a_actor->IsDead();
 			lit.loading = stored == nullptr;
+			// with the Bottled Shaders Shadows download one body glow light per creature casts the shadow (Bottled has few slots)
+			bool casterLeft = ShadowPatch();
 			for (const auto i : rowIds) {
 				const auto& row = Rows()[i];
 				auto*       bone = BoneFor(root, row);
@@ -600,11 +604,14 @@ namespace Plugin
 					light->local.translate = { p.x, p.y, p.z };
 					light->GetLightRuntimeData().radius.x = -1.0f;  // the clone's own may equal ours: Dress attenuates it at once
 					Dress(light, row, strength, a_s, PickedColor(i));
-					// not portal strict: a creature's glow goes through doorways with it
-					RE::NiPointer<RE::BSLight> bs(LightKit::Hang(node, light, scene, 1.0f, false));
+					// not portal strict: a creature's glow goes through doorways with it; the caster goes to the first glow light the
+					// scene takes, so a refused one hands it on
+					const bool                 cast = casterLeft && row.kind == Anima::Kind::kGlow;
+					RE::NiPointer<RE::BSLight> bs(LightKit::Hang(node, light, scene, 1.0f, false, cast));
 					if (!bs) {
 						continue;
 					}
+					casterLeft = casterLeft && !cast;
 					One one{ RE::NiPointer<RE::NiPointLight>(light), bs, {}, {}, {}, {}, i, light->GetLightRuntimeData().fade, false };
 					if (const auto shape = ShapeOf(row, a_s); !lit.dying && shape != Pulse::Kind::kNone) {
 						one.loop = MakeKeys(Anima::FadeKeys(one.fade, shape, lit.seed, Anima::kLoopSeconds, false));
@@ -1205,11 +1212,39 @@ namespace Plugin
 			static RE::NiAVObject* thunk(RE::Character* a_this, bool a_background)
 			{
 				auto* node = func(a_this, a_background);
-				if (node && CouldLight(a_this)) {
+				// a queued load's body is noted at its store on the main thread where that call is hooked (Store3DSite): nothing here then
+				if (node && !(a_background && gStoreHooked.load(std::memory_order_relaxed)) && CouldLight(a_this)) {
 					const auto id = a_this->GetFormID();
 					Note([id, node]() { gNoted.loaded.push_back({ id, true, RE::NiPointer<RE::NiAVObject>(node) }); });
 				}
 				return node;
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		// a queued load's body reaches TESObjectREFR::Store3D (19730) on the main thread at one of two calls: the store task (13005 +0x24),
+		// or 13015 +0xBD when the load is finished on the main thread itself (off it, 13015 queues that task). The arrival is noted there,
+		// after the game's own call, so no loader thread takes a lock or allocates for us (the reload crash's methods audit, 720). Neither
+		// site uses the return (read in the exe: each reloads its registers right after the call). One struct per site keeps each original
+		template <std::size_t Site>
+		struct Store3DSite
+		{
+			static void thunk(RE::TESObjectREFR* a_ref, RE::NiAVObject* a_node)
+			{
+				func(a_ref, a_node);
+				if (!a_ref || !a_node) {
+					return;
+				}
+				Guarded("a body stored", [a_ref, a_node]() {
+					if (auto* actor = a_ref->As<RE::Character>()) {
+						if (CouldLight(actor)) {
+							const auto id = actor->GetFormID();
+							Note([id, a_node]() { gNoted.loaded.push_back({ id, true, RE::NiPointer<RE::NiAVObject>(a_node) }); });
+						}
+						return;
+					}
+					NoteObjectStored(a_ref, a_node);
+				});
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -1629,6 +1664,40 @@ namespace Plugin
 			ImpactFree::func = particle.write_vfunc(0x00, ImpactFree::thunk);
 			SKSE::log::info("impact rows: a splash is lit at the call that sets its copy up (+0x{:X} in the exe)", site - REL::Module::get().base());
 		}
+
+		// the two calls into Store3D a queued load is finished by (AE: 13005 +0x24 and 13015 +0xBD -> 19730, the Signatures rows); both
+		// are checked before either is written, and the Load3D hooks stop noting only when both are in. SE's ids are not read here and VR
+		// takes no trampoline, so both keep noting a queued load at Load3D
+		void InstallStoreSite()
+		{
+			if (!REL::Module::IsAE()) {
+				SKSE::log::info("bodies: noted at Load3D (the store call is read for AE only)");
+				return;
+			}
+			auto&      trampoline = SKSE::GetTrampoline();
+			const auto store = REL::Relocation<std::uintptr_t>{ REL::ID(19730) }.address();
+			const auto task = REL::Relocation<std::uintptr_t>{ REL::ID(13005) }.address() + 0x24;
+			const auto main = REL::Relocation<std::uintptr_t>{ REL::ID(13015) }.address() + 0xBD;
+			const auto calls = [store](std::uintptr_t a_site) {
+				if (!LightKit::IsCallAt(a_site)) {
+					return false;
+				}
+				std::int32_t rel = 0;
+				std::memcpy(&rel, reinterpret_cast<const void*>(a_site + 1), sizeof(rel));
+				return a_site + 5 + static_cast<std::intptr_t>(rel) == store;
+			};
+			if (!calls(task) || !calls(main) || trampoline.free_size() < kStoreSiteBytes) {
+				SKSE::log::warn(
+					"bodies: the two calls into Store3D were not found as read (another shape, or another plugin changed one) or the "
+					"trampoline is full; a queued load is noted at Load3D");
+				return;
+			}
+			Store3DSite<0>::func = trampoline.write_call<5>(task, Store3DSite<0>::thunk);
+			Store3DSite<1>::func = trampoline.write_call<5>(main, Store3DSite<1>::thunk);
+			gStoreHooked = true;
+			SKSE::log::info("bodies: a queued load is noted at its store on the main thread (+0x{:X} and +0x{:X} in the exe)",
+				task - REL::Module::get().base(), main - REL::Module::get().base());
+		}
 	}
 
 	void InstallLights()
@@ -1650,6 +1719,7 @@ namespace Plugin
 		REL::Relocation<std::uintptr_t> vtbl{ RE::Character::VTABLE[0] };
 		Load3D::func = vtbl.write_vfunc(0x6A, Load3D::thunk);
 		Set3D::func = vtbl.write_vfunc(0x6C, Set3D::thunk);
+		InstallStoreSite();
 		// after Light Placer's own hook of this slot (its hooks go in at plugin load, ours at data load), so its lights are there; none with no file to answer
 		gWatchTheirArt = OthersLightBodies();
 		REL::Relocation<std::uintptr_t> art{ RE::ModelReferenceEffect::VTABLE[0] };

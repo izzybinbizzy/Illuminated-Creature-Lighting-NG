@@ -879,6 +879,9 @@ namespace
 		// ("%ige" reads as %i); a bad run time reads fully lit
 		CHECK(TranslationText::Usable("Brightness", "100 % Helligkeit") && !TranslationText::Usable("Brightness", "100%ige Helligkeit") &&
 			  !TranslationText::Usable("Lit %d", "%s beleuchtet"));
+		// a conversion after an unmatched brace is still read: a swapped one is refused both ways, a kept one taken
+		CHECK(!TranslationText::Usable("Count {%d", "Count {%s", TranslationText::Shown::kPrintf) &&
+			  !TranslationText::Usable("Count {%d", "Count {%s") && TranslationText::Usable("Count {%d", "Zahl {%d"));
 		CHECK(Near(LightKit::DimmerShare(0.0f, 1.0f, 1.0f, 0.0f, std::nanf(""), false), 1.0f) &&
 			  Near(LightKit::DimmerShare(0.0f, 1.0f, 1.0f, 0.0f, std::nanf(""), true), 1.0f));
 		CHECK(Anima::SurgeLift(0.9f) > 1.0f && Near(Anima::SurgeLift(1.2f), 1.0f));
@@ -906,9 +909,12 @@ namespace
 				Anima::SetCreatureOn(s, "Spriggan Matron", true);
 				CHECK(two && one && !s.creaturesOff && Anima::CreatureOn(s, "Spriggan Matron"));
 			}
-			// the reader's way: a whiteList that resolved to no form filters nothing (Light Placer's IsInvalid), one that did keeps filtering
+			// the reader's way (Light Placer 5.2.0): an empty whiteList filters nothing, one that resolved to some forms keeps filtering, and one
+			// that named forms of which none is installed reaches nothing
 			CHECK(!Anima::MakeFilter({}, {}).hasOnly && Anima::FilterLights(Anima::MakeFilter({}, {}), flame) &&
 				  Anima::MakeFilter({ 0x23AA6u }, {}).hasOnly && !Anima::FilterLights(Anima::MakeFilter({ 0x23AA6u }, {}), burst));
+			CHECK(!Anima::FilterLights(Anima::MakeFilter({}, {}, true), flame) && !Anima::ClaimsForm({ Anima::MakeFilter({}, {}, true) }, flame) &&
+				  Anima::FilterLights(Anima::MakeFilter({ 0x23AA6u }, {}, true), flame));
 		}
 		// values read off the file set the tuning, a count rounded and never below 0
 		const std::array<float, 12> mine{ 4.0f, 2.0f, 0.0f, 1.0f, 0.5f, 6.0f, 0.1f, 1.0f, 1.5f, 0.75f, 2.0f, 5.0f };

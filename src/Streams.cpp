@@ -152,8 +152,8 @@ namespace Plugin
 		host.oldCarrier = OlderCarrier;
 		StreamRows::Install(host);
 		StreamRows::Claim(std::move(rows));
-		// PlayerCharacter::Update sits one slot higher on VR (every slot from 0x82 on)
-		PlayerUpdate::func = REL::Relocation<std::uintptr_t>(RE::VTABLE_PlayerCharacter[0]).write_vfunc(REL::Relocate(0xAD, 0xAD, 0xAE), PlayerUpdate::thunk);
+		// Actor::Update: 0xAD SE / AE, 0xAF VR (CommonLib's Actor.cpp; VR 0xAE is PutActorOnMountQuick)
+		PlayerUpdate::func = REL::Relocation<std::uintptr_t>(RE::VTABLE_PlayerCharacter[0]).write_vfunc(REL::Relocate(0xAD, 0xAD, 0xAF), PlayerUpdate::thunk);
 		gStreams = true;
 	}
 

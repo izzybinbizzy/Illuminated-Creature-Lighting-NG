@@ -131,7 +131,7 @@ namespace Plugin
 			}
 
 			Header(Icon::kBulb, T("Lights"));
-			Field(T("Creature lights"), &Anima::Settings::on, T("Turns all of this mod's creature lights on or off. Other mods' lights are not changed."));
+			Field(T("Creature lights"), &Anima::Settings::on, T("Turns all of this mod's creature lights on or off; off gives other mods' lights back."));
 			constexpr std::array<std::array<const char*, 2>, Anima::kKinds> kKinds{ {
 				{ TR_MARK("Creature glow"), TR_MARK("Atronachs, wisps, spriggans, ice wraiths and other glowing creatures.") },
 				{ TR_MARK("Spells creatures use"), TR_MARK("Breaths, casting glow, swarms and other attacks creatures throw.") },
